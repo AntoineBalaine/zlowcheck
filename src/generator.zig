@@ -5,6 +5,9 @@ pub fn Generator(comptime T: type) type {
     return struct {
         const Self = @This();
 
+        /// The type of values this generator produces
+        pub const ValueType = T;
+
         /// Function that generates values
         generateFn: fn (random: std.Random, size: usize, allocator: std.mem.Allocator) error{OutOfMemory}!T,
 
@@ -278,23 +281,45 @@ fn optionalGen(comptime Child: type, child_gen: Generator(Child), config: anytyp
     };
 }
 
-// /// Combine multiple generators with a tuple
-// pub fn tuple(comptime generators: anytype) Generator(std.meta.Tuple(&generators)) {
-//     const Tuple = std.meta.Tuple(&generators);
-//
-//     return Generator(Tuple){
-//         .generateFn = struct {
-//             fn generate(random: std.Random, size: usize, allocator: std.mem.Allocator) !Tuple {
-//                 var result: Tuple = undefined;
-//                 inline for (generators, 0..) |genr, i| {
-//                     result[i] = try genr.generate(random, size, allocator);
-//                 }
-//                 return result;
-//             }
-//         }.generate,
-//     };
-// }
-//
+/// Combine multiple generators with a tuple
+pub fn tuple(comptime generators: anytype) blk: {
+    const fields = std.meta.fields(@TypeOf(generators));
+    var types: [fields.len]type = undefined;
+    for (fields, 0..) |field, i| {
+        const GenType = @TypeOf(@field(generators, field.name));
+        types[i] = GenType.ValueType;
+    }
+    break :blk Generator(std.meta.Tuple(&types));
+} {
+    // Define the tuple type once
+    const TupleType = comptime blk: {
+        const fields = std.meta.fields(@TypeOf(generators));
+        var types: [fields.len]type = undefined;
+        for (fields, 0..) |field, i| {
+            const GenType = @TypeOf(@field(generators, field.name));
+            types[i] = GenType.ValueType;
+        }
+        break :blk std.meta.Tuple(&types);
+    };
+
+    return Generator(TupleType){
+        .generateFn = struct {
+            const Generators = generators;
+
+            fn generate(random: std.Random, size: usize, allocator: std.mem.Allocator) !TupleType {
+                var result: TupleType = undefined;
+
+                inline for (std.meta.fields(@TypeOf(Generators)), 0..) |field, i| {
+                    const genrt = @field(Generators, field.name);
+                    result[i] = try genrt.generate(random, size, allocator);
+                }
+
+                return result;
+            }
+        }.generate,
+    };
+}
+
 // /// Choose between multiple generators
 // pub fn oneOf(comptime T: type, generators: []const Generator(T), weights: ?[]const f32) Generator(T) {
 //     return Generator(T){

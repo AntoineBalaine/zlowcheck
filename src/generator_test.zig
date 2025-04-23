@@ -1,7 +1,8 @@
 const std = @import("std");
-const Generator = @import("generator.zig").Generator;
-const gen = @import("generator.zig").gen;
-
+const generator = @import("generator.zig");
+const Generator = generator.Generator;
+const gen = generator.gen;
+const tuple = generator.tuple;
 test "int generator produces values within range" {
     // Create a generator for integers between 10 and 20
     const intGenerator = gen(i32, .{ .min = 10, .max = 20 });
@@ -936,5 +937,94 @@ test "vector generator with map function" {
             if (std.math.isNan(value) or std.math.isInf(value)) continue;
             try std.testing.expect(value >= 0.0 and value <= 10.0);
         }
+    }
+}
+
+test "tuple generator combines multiple generators" {
+    // Create generators for different types
+    const intGenerator = gen(i32, .{ .min = 1, .max = 100 });
+    const boolGenerator = gen(bool, .{});
+    const floatGenerator = gen(f64, .{ .min = -10.0, .max = 10.0 });
+
+    // Combine them into a tuple generator
+    const tupleGenerator = tuple(.{ intGenerator, boolGenerator, floatGenerator });
+
+    var prng = std.Random.DefaultPrng.init(42);
+    const random = prng.random();
+
+    // Generate tuples and check their components
+    for (0..10) |_| {
+        const value = try tupleGenerator.generate(random, 10, std.testing.allocator);
+
+        // Check that each component has the correct type and constraints
+        const int_value: i32 = value[0];
+        const bool_value: bool = value[1];
+        const float_value: f64 = value[2];
+
+        try std.testing.expect(int_value >= 1 and int_value <= 100);
+        try std.testing.expect(bool_value == true or bool_value == false);
+
+        // Skip NaN and infinity checks for float
+        if (!std.math.isNan(float_value) and !std.math.isInf(float_value)) {
+            try std.testing.expect(float_value >= -10.0 and float_value <= 10.0);
+        }
+    }
+}
+
+test "tuple generator with nested tuples" {
+    // Create generators for different types
+    const intGenerator = gen(i32, .{ .min = 1, .max = 10 });
+    const stringGenerator = gen([]u8, .{
+        .min_len = 3,
+        .max_len = 5,
+        .child_config = .{},
+    });
+
+    // Create a pair generator
+    const pairGenerator = tuple(.{ intGenerator, stringGenerator });
+
+    // Create a generator that combines a bool with a pair
+    const nestedTupleGenerator = tuple(.{ gen(bool, .{}), pairGenerator });
+
+    var prng = std.Random.DefaultPrng.init(42);
+    const random = prng.random();
+
+    // Generate nested tuples and check their components
+    for (0..5) |_| {
+        const value = try nestedTupleGenerator.generate(random, 10, std.testing.allocator);
+
+        // First element is a boolean
+        const bool_value: bool = value[0];
+        try std.testing.expect(bool_value == true or bool_value == false);
+
+        // Second element is a tuple of (i32, []u8)
+        const pair = value[1];
+        const int_value: i32 = pair[0];
+        const string_value: []u8 = pair[1];
+        defer std.testing.allocator.free(string_value);
+
+        try std.testing.expect(int_value >= 1 and int_value <= 10);
+        try std.testing.expect(string_value.len >= 3 and string_value.len <= 5);
+    }
+}
+
+test "tuple generator for property testing" {
+    // Generate pairs of integers
+    const pairGenerator = tuple(.{
+        gen(i32, .{ .min = -100, .max = 100 }),
+        gen(i32, .{ .min = -100, .max = 100 }),
+    });
+
+    var prng = std.Random.DefaultPrng.init(42);
+    const random = prng.random();
+
+    // Test the commutative property of addition
+    for (0..100) |_| {
+        const pair = try pairGenerator.generate(random, 10, std.testing.allocator);
+        const a = pair[0];
+        const b = pair[1];
+
+        // Test that a + b == b + a
+        try std.testing.expectEqual(a + b, b + a);
     }
 }
