@@ -320,40 +320,62 @@ pub fn tuple(comptime generators: anytype) blk: {
     };
 }
 
-// /// Choose between multiple generators
-// pub fn oneOf(comptime T: type, generators: []const Generator(T), weights: ?[]const f32) Generator(T) {
-//     return Generator(T){
-//         .generateFn = struct {
-//             const Gens = generators;
-//             const Weights = weights;
-//
-//             fn weightedChoice(rand: std.Random, weights_slice: []const f32) usize {
-//                 var total: f32 = 0;
-//                 for (weights_slice) |w| total += w;
-//
-//                 const r = rand.float(f32) * total;
-//                 var cumulative: f32 = 0;
-//
-//                 for (weights_slice, 0..) |w, i| {
-//                     cumulative += w;
-//                     if (r < cumulative) return i;
-//                 }
-//
-//                 return weights_slice.len - 1;
-//             }
-//
-//             fn generate(random: std.Random, size: usize, allocator: std.mem.Allocator) !T {
-//                 const idx = if (Weights) |w|
-//                     weightedChoice(random, w)
-//                 else
-//                     random.uintLessThan(usize, Gens.len);
-//
-//                 return Gens[idx].generate(random, size, allocator);
-//             }
-//         }.generate,
-//     };
-// }
-//
+/// Choose between multiple generators
+pub fn oneOf(comptime generators: anytype, weights: ?[]const f32) blk: {
+    // Get the type from the first generator
+    const T = @TypeOf(generators[0]).ValueType;
+
+    // Verify that all generators have the same output type
+    for (generators) |genr| {
+        if (@TypeOf(genr).ValueType != T) {
+            @compileError("All generators must have the same output type");
+        }
+    }
+
+    break :blk Generator(T);
+} {
+    // Get the type from the first generator
+    const T = @TypeOf(generators[0]).ValueType;
+
+    return Generator(T){
+        .generateFn = struct {
+            const Generators = generators;
+            const Weights = weights;
+
+            fn weightedChoice(rand: std.Random, weights_slice: []const f32) usize {
+                var total: f32 = 0;
+                for (weights_slice) |w| total += w;
+
+                const r = rand.float(f32) * total;
+                var cumulative: f32 = 0;
+
+                for (weights_slice, 0..) |w, i| {
+                    cumulative += w;
+                    if (r < cumulative) return i;
+                }
+
+                return weights_slice.len - 1;
+            }
+
+            fn generate(random: std.Random, size: usize, allocator: std.mem.Allocator) !T {
+                const idx = if (Weights) |w|
+                    weightedChoice(random, w)
+                else
+                    random.uintLessThan(usize, Generators.len);
+
+                // Use inline for to handle each generator at compile time
+                inline for (Generators, 0..) |genr, i| {
+                    if (i == idx) {
+                        return genr.generate(random, size, allocator);
+                    }
+                }
+
+                unreachable; // Should never reach here
+            }
+        }.generate,
+    };
+}
+
 // /// Configuration for property testing
 // pub const TestConfig = struct {
 //     allocator: std.mem.Allocator,

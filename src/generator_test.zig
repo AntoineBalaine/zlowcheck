@@ -3,6 +3,8 @@ const generator = @import("generator.zig");
 const Generator = generator.Generator;
 const gen = generator.gen;
 const tuple = generator.tuple;
+const oneOf = generator.oneOf;
+
 test "int generator produces values within range" {
     // Create a generator for integers between 10 and 20
     const intGenerator = gen(i32, .{ .min = 10, .max = 20 });
@@ -1027,4 +1029,126 @@ test "tuple generator for property testing" {
         // Test that a + b == b + a
         try std.testing.expectEqual(a + b, b + a);
     }
+}
+
+test "oneOf selects from multiple generators" {
+    // Create several integer generators with different ranges
+    const smallIntGen = gen(i32, .{ .min = 1, .max = 10 });
+    const mediumIntGen = gen(i32, .{ .min = 11, .max = 100 });
+    const largeIntGen = gen(i32, .{ .min = 101, .max = 1000 });
+
+    // Combine them with oneOf
+    const combinedGen = oneOf(.{ smallIntGen, mediumIntGen, largeIntGen }, null);
+
+    var prng = std.Random.DefaultPrng.init(42);
+    const random = prng.random();
+
+    // Track which ranges we've seen
+    var seen_small = false;
+    var seen_medium = false;
+    var seen_large = false;
+
+    // Generate many values to ensure we get all ranges
+    for (0..1000) |_| {
+        const value = try combinedGen.generate(random, 10, std.testing.allocator);
+
+        if (value >= 1 and value <= 10) seen_small = true;
+        if (value >= 11 and value <= 100) seen_medium = true;
+        if (value >= 101 and value <= 1000) seen_large = true;
+
+        if (seen_small and seen_medium and seen_large) break;
+    }
+
+    // We should have seen all three ranges
+    try std.testing.expect(seen_small);
+    try std.testing.expect(seen_medium);
+    try std.testing.expect(seen_large);
+}
+
+test "oneOf respects weights" {
+    // Create two boolean generators - one that always generates true, one that always generates false
+    const trueGen = gen(bool, .{}).map(bool, struct {
+        fn alwaysTrue(_: bool) bool {
+            return true;
+        }
+    }.alwaysTrue);
+
+    const falseGen = gen(bool, .{}).map(bool, struct {
+        fn alwaysFalse(_: bool) bool {
+            return false;
+        }
+    }.alwaysFalse);
+
+    // Create a heavily weighted generator that should mostly produce true
+    const weights = [_]f32{ 0.9, 0.1 }; // 90% true, 10% false
+    const weightedGen = oneOf(.{ trueGen, falseGen }, &weights);
+
+    var prng = std.Random.DefaultPrng.init(42);
+    const random = prng.random();
+
+    // Count true/false values
+    var true_count: usize = 0;
+    var false_count: usize = 0;
+    const iterations = 1000;
+
+    for (0..iterations) |_| {
+        const value = try weightedGen.generate(random, 10, std.testing.allocator);
+        if (value) true_count += 1 else false_count += 1;
+    }
+
+    // We should get roughly 90% true values
+    const true_ratio = @as(f32, @floatFromInt(true_count)) / @as(f32, @floatFromInt(iterations));
+    try std.testing.expect(true_ratio > 0.8); // Allow some statistical variation
+}
+
+test "oneOf with union generators" {
+    const Value = union(enum) {
+        int: i32,
+        float: f64,
+    };
+
+    // Create generators for each variant
+    const intValueGen = gen(i32, .{ .min = 1, .max = 100 }).map(Value, struct {
+        fn toIntValue(i: i32) Value {
+            return Value{ .int = i };
+        }
+    }.toIntValue);
+
+    const floatValueGen = gen(f64, .{ .min = 0.0, .max = 1.0 }).map(Value, struct {
+        fn toFloatValue(f: f64) Value {
+            return Value{ .float = f };
+        }
+    }.toFloatValue);
+
+    // Combine them with oneOf
+    const valueGen = oneOf(.{ intValueGen, floatValueGen }, null);
+
+    var prng = std.Random.DefaultPrng.init(42);
+    const random = prng.random();
+
+    // Track which variants we've seen
+    var seen_int = false;
+    var seen_float = false;
+
+    // Generate values until we've seen both variants
+    for (0..100) |_| {
+        const value = try valueGen.generate(random, 10, std.testing.allocator);
+
+        switch (value) {
+            .int => |i| {
+                seen_int = true;
+                try std.testing.expect(i >= 1 and i <= 100);
+            },
+            .float => |f| {
+                seen_float = true;
+                try std.testing.expect(f >= 0.0 and f <= 1.0);
+            },
+        }
+
+        if (seen_int and seen_float) break;
+    }
+
+    // We should have seen both variants
+    try std.testing.expect(seen_int);
+    try std.testing.expect(seen_float);
 }
