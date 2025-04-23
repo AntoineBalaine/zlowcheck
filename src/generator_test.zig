@@ -6,7 +6,7 @@ test "int generator produces values within range" {
     // Create a generator for integers between 10 and 20
     const intGenerator = gen(i32, .{ .min = 10, .max = 20 });
 
-    var prng = std.rand.DefaultPrng.init(42); // Fixed seed for reproducibility
+    var prng = std.Random.DefaultPrng.init(42); // Fixed seed for reproducibility
     const random = prng.random();
 
     // Generate 100 values and check they're all within range
@@ -20,7 +20,7 @@ test "int generator produces boundary values" {
     // Create a generator for integers
     const intGenerator = gen(i32, .{ .min = -100, .max = 100 });
 
-    var prng = std.rand.DefaultPrng.init(42);
+    var prng = std.Random.DefaultPrng.init(42);
     const random = prng.random();
 
     // Set to track boundary values we've seen
@@ -60,7 +60,7 @@ test "float generator produces values within range" {
     // Create a generator for floats between -10.0 and 10.0
     const floatGenerator = gen(f64, .{ .min = -10.0, .max = 10.0 });
 
-    var prng = std.rand.DefaultPrng.init(42);
+    var prng = std.Random.DefaultPrng.init(42);
     const random = prng.random();
 
     // Generate 100 values and check they're all within range
@@ -77,49 +77,47 @@ test "float generator produces values within range" {
 test "float generator produces special values" {
     const floatGenerator = gen(f64, .{});
 
-    var prng = std.rand.DefaultPrng.init(42);
+    var prng = std.Random.DefaultPrng.init(42);
     const random = prng.random();
 
     // Track special values we've seen
-    var seen_inf_pos = false;
-    var seen_inf_neg = false;
-    var seen_nan = false;
     var seen_zero = false;
     var seen_one = false;
     var seen_neg_one = false;
+    var seen_min_pos = false;
+    var seen_min_neg = false;
 
     // Generate many values to increase chance of hitting special values
     for (0..1000) |_| {
         const value = try floatGenerator.generate(random, 10, std.testing.allocator);
 
-        if (std.math.isPositiveInf(value)) seen_inf_pos = true;
-        if (std.math.isNegativeInf(value)) seen_inf_neg = true;
-        if (std.math.isNan(value)) seen_nan = true;
         if (value == 0.0) seen_zero = true;
         if (value == 1.0) seen_one = true;
         if (value == -1.0) seen_neg_one = true;
+        if (value == std.math.floatMin(f64)) seen_min_pos = true;
+        if (value == -std.math.floatMin(f64)) seen_min_neg = true;
 
         // If we've seen all special values, we can stop
-        if (seen_inf_pos and seen_inf_neg and seen_nan and
-            seen_zero and seen_one and seen_neg_one) break;
+        if (seen_zero and seen_one and seen_neg_one and 
+            seen_min_pos and seen_min_neg) break;
     }
 
     // We should have found at least some special values
-    const found_count = @intFromBool(seen_inf_pos) +
-        @intFromBool(seen_inf_neg) +
-        @intFromBool(seen_nan) +
-        @intFromBool(seen_zero) +
-        @intFromBool(seen_one) +
-        @intFromBool(seen_neg_one);
+    var found_count: usize = 0;
+    if (seen_zero) found_count += 1;
+    if (seen_one) found_count += 1;
+    if (seen_neg_one) found_count += 1;
+    if (seen_min_pos) found_count += 1;
+    if (seen_min_neg) found_count += 1;
 
     try std.testing.expect(found_count > 0);
-    std.debug.print("Found {d} of 6 special float values\n", .{found_count});
+    std.debug.print("Found {d} of 5 special float values\n", .{found_count});
 }
 
 test "bool generator produces both true and false" {
     const boolGenerator = gen(bool, .{});
 
-    var prng = std.rand.DefaultPrng.init(42);
+    var prng = std.Random.DefaultPrng.init(42);
     const random = prng.random();
 
     var seen_true = false;
@@ -149,13 +147,13 @@ test "map transforms values correctly" {
         }
     }.double);
 
-    var prng = std.rand.DefaultPrng.init(42);
+    var prng = std.Random.DefaultPrng.init(42);
     const random = prng.random();
 
     // Generate values and check they're all doubled
     for (0..100) |_| {
         const value = try doubledGenerator.generate(random, 10, std.testing.allocator);
-        try std.testing.expect(value >= 2 and value <= 20 and value % 2 == 0);
+        try std.testing.expect(value >= 2 and value <= 20 and @rem(value, 2) == 0);
     }
 }
 
@@ -170,7 +168,7 @@ test "filter constrains values correctly" {
         }
     }.isPositive);
 
-    var prng = std.rand.DefaultPrng.init(42);
+    var prng = std.Random.DefaultPrng.init(42);
     const random = prng.random();
 
     // Generate values and check they're all positive

@@ -82,12 +82,44 @@ fn intGen(comptime T: type, config: anytype) Generator(T) {
 
                 // Sometimes generate boundary values (20% of the time)
                 if (random.float(f32) < 0.2) {
-                    const boundaries = if (@typeInfo(T).int.signedness == .signed)
-                        [_]T{ Min, Min + 1, -1, 0, 1, Max - 1, Max }
-                    else
-                        [_]T{ Min, Min + 1, 0, 1, Max - 1, Max };
-
-                    const index = random.intRangeLessThan(usize, 0, boundaries.len);
+                    // Create a list of boundary values that respect min-max range
+                    var boundaries: [7]T = undefined;
+                    var count: usize = 0;
+                    
+                    // Always include min and max boundaries
+                    boundaries[count] = Min;
+                    count += 1;
+                    
+                    if (Min + 1 <= Max) {
+                        boundaries[count] = Min + 1;
+                        count += 1;
+                    }
+                    
+                    // Include -1, 0, 1 if within range
+                    if (@typeInfo(T).int.signedness == .signed and Min <= -1 and Max >= -1) {
+                        boundaries[count] = -1;
+                        count += 1;
+                    }
+                    
+                    if (Min <= 0 and Max >= 0) {
+                        boundaries[count] = 0;
+                        count += 1;
+                    }
+                    
+                    if (Min <= 1 and Max >= 1) {
+                        boundaries[count] = 1;
+                        count += 1;
+                    }
+                    
+                    if (Max - 1 >= Min) {
+                        boundaries[count] = Max - 1;
+                        count += 1;
+                    }
+                    
+                    boundaries[count] = Max;
+                    count += 1;
+                    
+                    const index = random.intRangeLessThan(usize, 0, count);
                     return boundaries[index];
                 }
 
@@ -113,18 +145,55 @@ fn floatGen(comptime T: type, config: anytype) Generator(T) {
 
                 // Sometimes generate special values (20% of the time)
                 if (random.float(f32) < 0.2) {
-                    const special_values = [_]T{
-                        -std.math.inf(T), // Negative infinity
-                        -1, // Negative unity
-                        -std.math.floatMin(T), // Smallest negative normalized value
-                        0, // Zero
-                        std.math.floatMin(T), // Smallest positive normalized value
-                        1, // Positive unity
-                        std.math.inf(T), // Positive infinity
-                        std.math.nan(T), // Not a number
-                    };
-
-                    const index = random.intRangeLessThan(usize, 0, special_values.len);
+                    // Create a list of edge cases that respect min-max boundaries
+                    var special_values: [8]T = undefined;
+                    var count: usize = 0;
+                    
+                    // Always include min and max boundaries
+                    special_values[count] = Min;
+                    count += 1;
+                    special_values[count] = Max;
+                    count += 1;
+                    
+                    // Include 0 if it's within range
+                    if (Min <= 0 and Max >= 0) {
+                        special_values[count] = 0;
+                        count += 1;
+                    }
+                    
+                    // Include -1 and 1 if within range
+                    if (Min <= -1 and Max >= -1) {
+                        special_values[count] = -1;
+                        count += 1;
+                    }
+                    if (Min <= 1 and Max >= 1) {
+                        special_values[count] = 1;
+                        count += 1;
+                    }
+                    
+                    // Include smallest normalized values if within range
+                    const smallest_pos = std.math.floatMin(T);
+                    if (Min <= smallest_pos and Max >= smallest_pos) {
+                        special_values[count] = smallest_pos;
+                        count += 1;
+                    }
+                    const smallest_neg = -std.math.floatMin(T);
+                    if (Min <= smallest_neg and Max >= smallest_neg) {
+                        special_values[count] = smallest_neg;
+                        count += 1;
+                    }
+                    
+                    // Include infinity if within range (only possible if Max is infinity)
+                    if (Max == std.math.inf(T)) {
+                        special_values[count] = std.math.inf(T);
+                        count += 1;
+                    }
+                    if (Min == -std.math.inf(T)) {
+                        special_values[count] = -std.math.inf(T);
+                        count += 1;
+                    }
+                    
+                    const index = random.intRangeLessThan(usize, 0, count);
                     return special_values[index];
                 }
 
@@ -295,7 +364,7 @@ fn arrayGen(comptime E: type, comptime len: usize, element_gen: Generator(E)) Ge
 //
 // /// Run a property test
 // pub fn forAll(comptime T: type, generator: Generator(T), property: fn (T) bool, config: TestConfig) !bool {
-//     var prng = std.rand.DefaultPrng.init(config.seed);
+//     var prng = std.Random.DefaultPrng.init(config.seed);
 //     var random = prng.random();
 //
 //     var success = true;
