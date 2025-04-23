@@ -2,104 +2,93 @@ const std = @import("std");
 
 /// Get boundary values for integer types
 fn getIntBoundaryValues(comptime T: type, min_val: T, max_val: T, out_boundaries: []T) usize {
-    var count: usize = 0;
+    var list = std.ArrayListUnmanaged(T).initBuffer(out_boundaries);
 
-    // Always include min and max boundaries
-    out_boundaries[count] = min_val;
-    count += 1;
+    // Always include min boundary
+    list.appendAssumeCapacity(min_val);
 
     if (min_val + 1 <= max_val) {
-        out_boundaries[count] = min_val + 1;
-        count += 1;
+        list.appendAssumeCapacity(min_val + 1);
     }
 
     // Include -1, 0, 1 if within range
     if (@typeInfo(T).int.signedness == .signed and min_val <= -1 and max_val >= -1) {
-        out_boundaries[count] = -1;
-        count += 1;
+        list.appendAssumeCapacity(-1);
     }
 
     if (min_val <= 0 and max_val >= 0) {
-        out_boundaries[count] = 0;
-        count += 1;
+        list.appendAssumeCapacity(0);
     }
 
     if (min_val <= 1 and max_val >= 1) {
-        out_boundaries[count] = 1;
-        count += 1;
+        list.appendAssumeCapacity(1);
     }
 
     if (max_val - 1 >= min_val) {
-        out_boundaries[count] = max_val - 1;
-        count += 1;
+        list.appendAssumeCapacity(max_val - 1);
     }
 
-    // Always make sure max_val is included
-    var max_included = false;
-    for (0..count) |i| {
-        if (out_boundaries[i] == max_val) {
-            max_included = true;
-            break;
+    // Always include max boundary if not already included
+    if (min_val != max_val) {
+        // Check if max is already in the list
+        var max_included = false;
+        for (list.items) |item| {
+            if (item == max_val) {
+                max_included = true;
+                break;
+            }
+        }
+        
+        if (!max_included) {
+            list.appendAssumeCapacity(max_val);
         }
     }
-    
-    if (!max_included) {
-        out_boundaries[count] = max_val;
-        count += 1;
-    }
 
-    return count;
+    return list.items.len;
 }
 
 /// Get special values for float types
 fn getFloatSpecialValues(comptime T: type, min_val: T, max_val: T, out_values: []T) usize {
-    var count: usize = 0;
+    var list = std.ArrayListUnmanaged(T).initBuffer(out_values);
 
     // Always include min and max boundaries
-    out_values[count] = min_val;
-    count += 1;
-    out_values[count] = max_val;
-    count += 1;
+    list.appendAssumeCapacity(min_val);
+    if (min_val != max_val) {
+        list.appendAssumeCapacity(max_val);
+    }
 
     // Include 0 if it's within range
     if (min_val <= 0 and max_val >= 0) {
-        out_values[count] = 0;
-        count += 1;
+        list.appendAssumeCapacity(0);
     }
 
     // Include -1 and 1 if within range
     if (min_val <= -1 and max_val >= -1) {
-        out_values[count] = -1;
-        count += 1;
+        list.appendAssumeCapacity(-1);
     }
     if (min_val <= 1 and max_val >= 1) {
-        out_values[count] = 1;
-        count += 1;
+        list.appendAssumeCapacity(1);
     }
 
     // Include smallest normalized values if within range
     const smallest_pos = std.math.floatMin(T);
     if (min_val <= smallest_pos and max_val >= smallest_pos) {
-        out_values[count] = smallest_pos;
-        count += 1;
+        list.appendAssumeCapacity(smallest_pos);
     }
     const smallest_neg = -std.math.floatMin(T);
     if (min_val <= smallest_neg and max_val >= smallest_neg) {
-        out_values[count] = smallest_neg;
-        count += 1;
+        list.appendAssumeCapacity(smallest_neg);
     }
 
     // Include infinity if within range (only possible if max_val is infinity)
     if (max_val == std.math.inf(T)) {
-        out_values[count] = std.math.inf(T);
-        count += 1;
+        list.appendAssumeCapacity(std.math.inf(T));
     }
     if (min_val == -std.math.inf(T)) {
-        out_values[count] = -std.math.inf(T);
-        count += 1;
+        list.appendAssumeCapacity(-std.math.inf(T));
     }
 
-    return count;
+    return list.items.len;
 }
 
 /// Core Generator type that produces random values of a specific type
