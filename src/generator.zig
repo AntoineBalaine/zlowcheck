@@ -61,13 +61,17 @@ pub fn gen(comptime T: type, config: anytype) Generator(T) {
             config.child_config
         else
             @compileError("Expected 'child_config' field for array type " ++ @typeName(T)))),
-        .pointer => |info| if (info.size == .slice)
-            sliceGen(info.child, gen(info.child, if (@hasField(@TypeOf(config), "child_config"))
+        .pointer => |info| switch (info.size) {
+            .slice => sliceGen(info.child, gen(info.child, if (@hasField(@TypeOf(config), "child_config"))
                 config.child_config
             else
-                @compileError("Expected 'child_config' field for slice type " ++ @typeName(T))), config)
-        else
-            @compileError("Cannot generate pointers except slices"),
+                @compileError("Expected 'child_config' field for slice type " ++ @typeName(T))), config),
+            .one => pointerGen(info.child, gen(info.child, if (@hasField(@TypeOf(config), "child_config"))
+                config.child_config
+            else
+                .{})),
+            else => @compileError("Cannot generate pointers except slices and single pointers"),
+        },
         .@"struct" => structGen(T, config),
         .@"enum" => enumGen(T),
         .optional => |info| optionalGen(
@@ -467,6 +471,23 @@ fn getIntBoundaryValues(comptime T: type, min_val: T, max_val: T, out_boundaries
     }
 
     return list.items.len;
+}
+
+/// Generate single pointers
+fn pointerGen(comptime Child: type, child_gen: Generator(Child)) Generator(*Child) {
+    return Generator(*Child){
+        .generateFn = struct {
+            const ChildGen = child_gen;
+            
+            fn generate(random: std.Random, size: usize, allocator: std.mem.Allocator) !*Child {
+                const ptr = try allocator.create(Child);
+                errdefer allocator.destroy(ptr);
+                
+                ptr.* = try ChildGen.generate(random, size, allocator);
+                return ptr;
+            }
+        }.generate,
+    };
 }
 
 /// Get special values for float types

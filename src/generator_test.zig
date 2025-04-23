@@ -636,3 +636,69 @@ test "optional generator with custom null probability" {
     try std.testing.expect(rare_null_ratio < 0.2); // Should be close to 0.1
     try std.testing.expect(frequent_null_ratio > 0.8); // Should be close to 0.9
 }
+
+test "single pointer generator works correctly" {
+    const Point = struct {
+        x: i32,
+        y: i32,
+    };
+
+    // Create a generator for pointers to Point structs
+    const pointPtrGenerator = gen(*Point, .{
+        .child_config = .{
+            .x = .{ .min = 0, .max = 100 },
+            .y = .{ .min = 0, .max = 100 },
+        },
+    });
+
+    var prng = std.Random.DefaultPrng.init(42);
+    const random = prng.random();
+
+    // Generate a pointer to a Point and check its values
+    const point_ptr = try pointPtrGenerator.generate(random, 10, std.testing.allocator);
+    defer std.testing.allocator.destroy(point_ptr);
+
+    try std.testing.expect(point_ptr.x >= 0 and point_ptr.x <= 100);
+    try std.testing.expect(point_ptr.y >= 0 and point_ptr.y <= 100);
+}
+
+test "single pointer to primitive type" {
+    // Create a generator for pointers to integers
+    const intPtrGenerator = gen(*i32, .{
+        .child_config = .{ .min = -50, .max = 50 },
+    });
+
+    var prng = std.Random.DefaultPrng.init(42);
+    const random = prng.random();
+
+    // Generate several pointers and check their values
+    for (0..10) |_| {
+        const int_ptr = try intPtrGenerator.generate(random, 10, std.testing.allocator);
+        defer std.testing.allocator.destroy(int_ptr);
+
+        try std.testing.expect(int_ptr.* >= -50 and int_ptr.* <= 50);
+    }
+}
+
+test "pointer to array" {
+    // Create a generator for pointers to arrays
+    const arrayPtrGenerator = gen(*[3]bool, .{
+        .child_config = .{
+            .child_config = .{},
+        },
+    });
+
+    var prng = std.Random.DefaultPrng.init(42);
+    const random = prng.random();
+
+    // Generate a pointer to an array and check its values
+    const array_ptr = try arrayPtrGenerator.generate(random, 10, std.testing.allocator);
+    defer std.testing.allocator.destroy(array_ptr);
+
+    try std.testing.expectEqual(@as(usize, 3), array_ptr.len);
+    
+    // Each element should be a valid boolean
+    for (array_ptr) |value| {
+        try std.testing.expect(value == true or value == false);
+    }
+}
