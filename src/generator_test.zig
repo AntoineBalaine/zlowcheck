@@ -298,3 +298,116 @@ test "array generator with map function" {
         }
     }
 }
+
+test "slice generator produces slices of correct length range" {
+    // Generate []i32 slices with lengths between 3 and 7
+    const sliceGenerator = gen([]i32, .{
+        .min_len = 3,
+        .max_len = 7,
+        .child_config = .{ .min = -10, .max = 10 },
+    });
+
+    var prng = std.Random.DefaultPrng.init(42);
+    const random = prng.random();
+
+    // Generate slices and check their length is within range
+    for (0..10) |_| {
+        const slice = try sliceGenerator.generate(random, 10, std.testing.allocator);
+        defer std.testing.allocator.free(slice);
+
+        try std.testing.expect(slice.len >= 3 and slice.len <= 7);
+    }
+}
+
+test "slice generator respects element bounds" {
+    // Generate []i32 slices with elements between 5 and 15
+    const sliceGenerator = gen([]i32, .{
+        .min_len = 1,
+        .max_len = 10,
+        .child_config = .{ .min = 5, .max = 15 },
+    });
+
+    var prng = std.Random.DefaultPrng.init(42);
+    const random = prng.random();
+
+    // Generate slices and check all elements are within bounds
+    for (0..10) |_| {
+        const slice = try sliceGenerator.generate(random, 10, std.testing.allocator);
+        defer std.testing.allocator.free(slice);
+
+        for (slice) |value| {
+            try std.testing.expect(value >= 5 and value <= 15);
+        }
+    }
+}
+
+test "slice generator with map function" {
+    // Generate []i32 slices with elements between 1 and 10
+    const baseSliceGenerator = gen([]i32, .{
+        .min_len = 3,
+        .max_len = 5,
+        .child_config = .{ .min = 1, .max = 10 },
+    });
+
+    // Map to double all elements in place
+    const doubledSliceGenerator = baseSliceGenerator.map([]i32, struct {
+        fn doubleElements(slice: []i32) []i32 {
+            // Modify values in place
+            for (slice) |*value| {
+                value.* *= 2;
+            }
+            return slice; // Return the same slice
+        }
+    }.doubleElements);
+
+    var prng = std.Random.DefaultPrng.init(42);
+    const random = prng.random();
+
+    // Generate slices and check elements are doubled
+    for (0..5) |_| {
+        const slice = try doubledSliceGenerator.generate(random, 10, std.testing.allocator);
+        defer std.testing.allocator.free(slice);
+
+        for (slice) |value| {
+            try std.testing.expect(value >= 2 and value <= 20);
+            try std.testing.expect(@rem(value, 2) == 0); // All values should be even
+        }
+    }
+}
+
+test "nested slice generator works correctly" {
+    // Generate [][]i32 slices with elements between 1 and 100
+    const nestedSliceGenerator = gen([][]i32, .{
+        .min_len = 2,
+        .max_len = 4,
+        .child_config = .{
+            .min_len = 3,
+            .max_len = 5,
+            .child_config = .{ .min = 1, .max = 100 },
+        },
+    });
+
+    var prng = std.Random.DefaultPrng.init(42);
+    const random = prng.random();
+
+    // Generate a nested slice and check its structure and values
+    const nested_slice = try nestedSliceGenerator.generate(random, 10, std.testing.allocator);
+    defer {
+        for (nested_slice) |inner_slice| {
+            std.testing.allocator.free(inner_slice);
+        }
+        std.testing.allocator.free(nested_slice);
+    }
+
+    // Check outer slice length
+    try std.testing.expect(nested_slice.len >= 2 and nested_slice.len <= 4);
+
+    // Check inner slice lengths and element bounds
+    for (nested_slice) |inner_slice| {
+        try std.testing.expect(inner_slice.len >= 3 and inner_slice.len <= 5);
+
+        for (inner_slice) |value| {
+            try std.testing.expect(value >= 1 and value <= 100);
+        }
+    }
+}
