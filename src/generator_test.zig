@@ -98,7 +98,7 @@ test "float generator produces special values" {
         if (value == -std.math.floatMin(f64)) seen_min_neg = true;
 
         // If we've seen all special values, we can stop
-        if (seen_zero and seen_one and seen_neg_one and 
+        if (seen_zero and seen_one and seen_neg_one and
             seen_min_pos and seen_min_neg) break;
     }
 
@@ -175,5 +175,126 @@ test "filter constrains values correctly" {
     for (0..100) |_| {
         const value = try positiveGenerator.generate(random, 10, std.testing.allocator);
         try std.testing.expect(value > 0 and value <= 10);
+    }
+}
+
+test "array generator produces arrays of the correct length" {
+    // Generate [5]i32 arrays
+    const arrayGenerator = gen([5]i32, .{
+        .child_config = .{ .min = -10, .max = 10 },
+    });
+
+    var prng = std.Random.DefaultPrng.init(42);
+    const random = prng.random();
+
+    // Generate a few arrays and check their length
+    for (0..10) |_| {
+        const array = try arrayGenerator.generate(random, 10, std.testing.allocator);
+        try std.testing.expectEqual(@as(usize, 5), array.len);
+    }
+}
+
+test "array generator respects element bounds" {
+    // Generate [10]i32 arrays with elements between 5 and 15
+    const arrayGenerator = gen([10]i32, .{
+        .child_config = .{ .min = 5, .max = 15 },
+    });
+
+    var prng = std.Random.DefaultPrng.init(42);
+    const random = prng.random();
+
+    // Generate arrays and check all elements are within bounds
+    for (0..10) |_| {
+        const array = try arrayGenerator.generate(random, 10, std.testing.allocator);
+
+        for (array) |value| {
+            try std.testing.expect(value >= 5 and value <= 15);
+        }
+    }
+}
+
+test "nested array generator works correctly" {
+    // Generate [3][4]i32 arrays with elements between 1 and 100
+    const nestedArrayGenerator = gen([3][4]i32, .{
+        .child_config = .{
+            .child_config = .{ .min = 1, .max = 100 },
+        },
+    });
+
+    var prng = std.Random.DefaultPrng.init(42);
+    const random = prng.random();
+
+    // Generate a nested array and check its structure and values
+    const nested_array = try nestedArrayGenerator.generate(random, 10, std.testing.allocator);
+
+    // Check outer array length
+    try std.testing.expectEqual(@as(usize, 3), nested_array.len);
+
+    // Check inner array lengths and element bounds
+    for (nested_array) |inner_array| {
+        try std.testing.expectEqual(@as(usize, 4), inner_array.len);
+
+        for (inner_array) |value| {
+            try std.testing.expect(value >= 1 and value <= 100);
+        }
+    }
+}
+
+test "array of booleans generator works correctly" {
+    // Generate [8]bool arrays
+    const boolArrayGenerator = gen([8]bool, .{
+        .child_config = .{},
+    });
+
+    var prng = std.Random.DefaultPrng.init(42);
+    const random = prng.random();
+
+    // Generate several arrays to ensure we get both true and false values
+    var seen_true = false;
+    var seen_false = false;
+
+    for (0..10) |_| {
+        const array = try boolArrayGenerator.generate(random, 10, std.testing.allocator);
+        try std.testing.expectEqual(@as(usize, 8), array.len);
+
+        for (array) |value| {
+            if (value) seen_true = true else seen_false = true;
+        }
+
+        if (seen_true and seen_false) break;
+    }
+
+    // We should have seen both true and false values
+    try std.testing.expect(seen_true and seen_false);
+}
+
+test "array generator with map function" {
+    // Generate [5]i32 arrays with elements between 1 and 10
+    const baseArrayGenerator = gen([5]i32, .{
+        .child_config = .{ .min = 1, .max = 10 },
+    });
+
+    // Map to double all elements
+    const doubledArrayGenerator = baseArrayGenerator.map([5]i32, struct {
+        fn doubleElements(array: [5]i32) [5]i32 {
+            var result: [5]i32 = undefined;
+            for (array, 0..) |value, i| {
+                result[i] = value * 2;
+            }
+            return result;
+        }
+    }.doubleElements);
+
+    var prng = std.Random.DefaultPrng.init(42);
+    const random = prng.random();
+
+    // Generate arrays and check elements are doubled
+    for (0..10) |_| {
+        const array = try doubledArrayGenerator.generate(random, 10, std.testing.allocator);
+
+        for (array) |value| {
+            try std.testing.expect(value >= 2 and value <= 20);
+            try std.testing.expect(@rem(value, 2) == 0); // All values should be even
+        }
     }
 }

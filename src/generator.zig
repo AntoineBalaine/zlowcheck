@@ -152,9 +152,12 @@ pub fn gen(comptime T: type, config: anytype) Generator(T) {
         .int => intGen(T, config),
         .float => floatGen(T, config),
         .bool => boolGen(config),
-        // .Array => |info| arrayGen(info.child, info.len, gen(info.child, config.element_config orelse {})),
+        .array => |info| arrayGen(info.child, info.len, gen(info.child, if (@hasField(@TypeOf(config), "child_config"))
+            config.child_config
+        else
+            @compileError("Expected 'child_config' field for array type " ++ @typeName(T)))),
         // .Pointer => |info| if (info.size == .Slice)
-        //     sliceGen(info.child, gen(info.child, config.element_config orelse {}), config)
+        //     sliceGen(info.child, gen(info.child, config.child_config orelse {}), config)
         // else
         //     @compileError("Cannot generate pointers except slices"),
         // .Struct => structGen(T, config),
