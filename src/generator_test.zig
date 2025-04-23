@@ -702,3 +702,160 @@ test "pointer to array" {
         try std.testing.expect(value == true or value == false);
     }
 }
+
+test "untagged union generator produces valid values" {
+    const Value = union(enum) {
+        int: i32,
+        float: f64,
+        boolean: bool,
+    };
+
+    // Create a generator for the Value union
+    const valueGenerator = gen(Value, .{
+        .int = .{ .min = 1, .max = 100 },
+        .float = .{ .min = -10.0, .max = 10.0 },
+        .boolean = .{},
+    });
+
+    var prng = std.Random.DefaultPrng.init(42);
+    const random = prng.random();
+
+    // Track which union variants we've seen
+    var seen_int = false;
+    var seen_float = false;
+    var seen_boolean = false;
+
+    // Generate many values to ensure we get all variants
+    for (0..100) |_| {
+        const value = try valueGenerator.generate(random, 10, std.testing.allocator);
+
+        // Determine which variant we got and verify its constraints
+        const active_tag = std.meta.activeTag(value);
+        switch (active_tag) {
+            .int => {
+                seen_int = true;
+                try std.testing.expect(value.int >= 1 and value.int <= 100);
+            },
+            .float => {
+                seen_float = true;
+                try std.testing.expect(value.float >= -10.0 and value.float <= 10.0);
+            },
+            .boolean => {
+                seen_boolean = true;
+                try std.testing.expect(value.boolean == true or value.boolean == false);
+            },
+        }
+
+        if (seen_int and seen_float and seen_boolean) break;
+    }
+
+    // We should have seen all union variants
+    try std.testing.expect(seen_int);
+    try std.testing.expect(seen_float);
+    try std.testing.expect(seen_boolean);
+}
+
+test "tagged union generator works correctly" {
+    const Shape = union(enum) {
+        circle: struct { radius: f32 },
+        rectangle: struct { width: f32, height: f32 },
+        triangle: struct { base: f32, height: f32 },
+    };
+
+    // Create a generator for the Shape union
+    const shapeGenerator = gen(Shape, .{
+        .circle = .{
+            .radius = .{ .min = 1.0, .max = 10.0 },
+        },
+        .rectangle = .{
+            .width = .{ .min = 1.0, .max = 20.0 },
+            .height = .{ .min = 1.0, .max = 15.0 },
+        },
+        .triangle = .{
+            .base = .{ .min = 1.0, .max = 10.0 },
+            .height = .{ .min = 1.0, .max = 10.0 },
+        },
+    });
+
+    var prng = std.Random.DefaultPrng.init(42);
+    const random = prng.random();
+
+    // Track which union variants we've seen
+    var seen_circle = false;
+    var seen_rectangle = false;
+    var seen_triangle = false;
+
+    // Generate many values to ensure we get all variants
+    for (0..100) |_| {
+        const shape = try shapeGenerator.generate(random, 10, std.testing.allocator);
+
+        // Verify the shape's constraints
+        switch (shape) {
+            .circle => |c| {
+                seen_circle = true;
+                try std.testing.expect(c.radius >= 1.0 and c.radius <= 10.0);
+            },
+            .rectangle => |r| {
+                seen_rectangle = true;
+                try std.testing.expect(r.width >= 1.0 and r.width <= 20.0);
+                try std.testing.expect(r.height >= 1.0 and r.height <= 15.0);
+            },
+            .triangle => |t| {
+                seen_triangle = true;
+                try std.testing.expect(t.base >= 1.0 and t.base <= 10.0);
+                try std.testing.expect(t.height >= 1.0 and t.height <= 10.0);
+            },
+        }
+
+        if (seen_circle and seen_rectangle and seen_triangle) break;
+    }
+
+    // We should have seen all union variants
+    try std.testing.expect(seen_circle);
+    try std.testing.expect(seen_rectangle);
+    try std.testing.expect(seen_triangle);
+}
+
+test "union with slice fields" {
+    const Data = union(enum) {
+        text: []u8,
+        numbers: []i32,
+    };
+
+    // Create a generator for the Data union
+    const dataGenerator = gen(Data, .{
+        .text = .{
+            .min_len = 5,
+            .max_len = 10,
+            .child_config = .{},
+        },
+        .numbers = .{
+            .min_len = 3,
+            .max_len = 6,
+            .child_config = .{ .min = -10, .max = 10 },
+        },
+    });
+
+    var prng = std.Random.DefaultPrng.init(42);
+    const random = prng.random();
+
+    // Generate a few values and check their constraints
+    for (0..10) |_| {
+        const data = try dataGenerator.generate(random, 10, std.testing.allocator);
+        
+        // Use if/else instead of switch for the union
+        if (data == .text) {
+            const t = data.text;
+            defer std.testing.allocator.free(t);
+            try std.testing.expect(t.len >= 5 and t.len <= 10);
+        } else if (data == .numbers) {
+            const n = data.numbers;
+            defer std.testing.allocator.free(n);
+            try std.testing.expect(n.len >= 3 and n.len <= 6);
+            
+            for (n) |num| {
+                try std.testing.expect(num >= -10 and num <= 10);
+            }
+        }
+    }
+}

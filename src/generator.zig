@@ -74,6 +74,7 @@ pub fn gen(comptime T: type, config: anytype) Generator(T) {
         },
         .@"struct" => structGen(T, config),
         .@"enum" => enumGen(T),
+        .@"union" => |info| unionGen(T, info, config),
         .optional => |info| optionalGen(
             info.child,
             gen(info.child, if (@hasField(@TypeOf(config), "child_config"))
@@ -478,13 +479,55 @@ fn pointerGen(comptime Child: type, child_gen: Generator(Child)) Generator(*Chil
     return Generator(*Child){
         .generateFn = struct {
             const ChildGen = child_gen;
-            
+
             fn generate(random: std.Random, size: usize, allocator: std.mem.Allocator) !*Child {
                 const ptr = try allocator.create(Child);
                 errdefer allocator.destroy(ptr);
-                
+
                 ptr.* = try ChildGen.generate(random, size, allocator);
                 return ptr;
+            }
+        }.generate,
+    };
+}
+
+/// Generate union values
+fn unionGen(comptime T: type, info: std.builtin.Type.Union, config: anytype) Generator(T) {
+    const field_names = comptime blk: {
+        var names: [info.fields.len][]const u8 = undefined;
+        for (info.fields, 0..) |field, i| {
+            names[i] = field.name;
+        }
+        break :blk names;
+    };
+
+    return Generator(T){
+        .generateFn = struct {
+            const FieldNames = field_names;
+
+            fn generate(random: std.Random, size: usize, allocator: std.mem.Allocator) !T {
+                // Randomly select a field index
+                const field_index = random.intRangeLessThan(usize, 0, FieldNames.len);
+                const field_name = FieldNames[field_index];
+
+                // Use inline for to handle each field at compile time
+                inline for (info.fields) |field| {
+                    if (std.mem.eql(u8, field.name, field_name)) {
+                        // Get field-specific config if available
+                        const field_config = if (@hasField(@TypeOf(config), field.name))
+                            @field(config, field.name)
+                        else
+                            .{};
+
+                        // Generate a value for the selected field
+                        const field_value = try gen(field.type, field_config).generate(random, size, allocator);
+
+                        // Initialize the union with the generated value
+                        return @unionInit(T, field.name, field_value);
+                    }
+                }
+
+                unreachable; // Should never reach here
             }
         }.generate,
     };
