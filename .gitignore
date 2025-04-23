@@ -1,2 +1,5 @@
 .zig-cache
 zig-out
+.aider.tags.cache.v4
+.aider.chat.history.md
+.aider.input.history
