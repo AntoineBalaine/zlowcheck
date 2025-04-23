@@ -51,9 +51,9 @@ pub fn Generator(comptime T: type) type {
 /// Core generator function that dispatches based on type
 pub fn gen(comptime T: type, config: anytype) Generator(T) {
     return switch (@typeInfo(T)) {
-        .Int => intGen(T, config),
-        .Float => floatGen(T, config),
-        .Bool => boolGen(config),
+        .int => intGen(T, config),
+        .float => floatGen(T, config),
+        .bool => boolGen(config),
         // .Array => |info| arrayGen(info.child, info.len, gen(info.child, config.element_config orelse {})),
         // .Pointer => |info| if (info.size == .Slice)
         //     sliceGen(info.child, gen(info.child, config.element_config orelse {}), config)
