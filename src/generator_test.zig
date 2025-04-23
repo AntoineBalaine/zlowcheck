@@ -564,3 +564,75 @@ test "enum generator with non-zero values" {
         }
     }
 }
+
+test "optional generator produces both null and values" {
+    // Create a generator for optional integers
+    const optIntGenerator = gen(?i32, .{
+        .child_config = .{ .min = 1, .max = 100 },
+        .null_probability = 0.5, // 50% chance of null
+    });
+
+    var prng = std.Random.DefaultPrng.init(42);
+    const random = prng.random();
+
+    var seen_null = false;
+    var seen_value = false;
+
+    // Generate values until we've seen both null and non-null
+    for (0..100) |_| {
+        const value = try optIntGenerator.generate(random, 10, std.testing.allocator);
+
+        if (value == null) {
+            seen_null = true;
+        } else {
+            seen_value = true;
+            // Check that non-null values respect the child generator's constraints
+            try std.testing.expect(value.? >= 1 and value.? <= 100);
+        }
+
+        if (seen_null and seen_value) break;
+    }
+
+    // We should have seen both null and non-null values
+    try std.testing.expect(seen_null and seen_value);
+}
+
+test "optional generator with custom null probability" {
+    // Create generators with different null probabilities
+    const rareNullGen = gen(?i32, .{
+        .child_config = .{ .min = 1, .max = 100 },
+        .null_probability = 0.1, // 10% chance of null
+    });
+
+    const frequentNullGen = gen(?i32, .{
+        .child_config = .{ .min = 1, .max = 100 },
+        .null_probability = 0.9, // 90% chance of null
+    });
+
+    var prng = std.Random.DefaultPrng.init(42);
+    const random = prng.random();
+
+    // Count nulls for each generator
+    var rare_null_count: usize = 0;
+    var frequent_null_count: usize = 0;
+    const iterations = 1000;
+
+    for (0..iterations) |_| {
+        const rare_value = try rareNullGen.generate(random, 10, std.testing.allocator);
+        const frequent_value = try frequentNullGen.generate(random, 10, std.testing.allocator);
+
+        if (rare_value == null) rare_null_count += 1;
+        if (frequent_value == null) frequent_null_count += 1;
+    }
+
+    // The generator with higher null probability should produce more nulls
+    try std.testing.expect(frequent_null_count > rare_null_count);
+    
+    // Check that the null counts are roughly in line with the probabilities
+    // (allowing for some statistical variation)
+    const rare_null_ratio = @as(f32, @floatFromInt(rare_null_count)) / @as(f32, @floatFromInt(iterations));
+    const frequent_null_ratio = @as(f32, @floatFromInt(frequent_null_count)) / @as(f32, @floatFromInt(iterations));
+    
+    try std.testing.expect(rare_null_ratio < 0.2); // Should be close to 0.1
+    try std.testing.expect(frequent_null_ratio > 0.8); // Should be close to 0.9
+}

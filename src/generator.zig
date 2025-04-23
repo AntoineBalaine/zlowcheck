@@ -70,6 +70,14 @@ pub fn gen(comptime T: type, config: anytype) Generator(T) {
             @compileError("Cannot generate pointers except slices"),
         .@"struct" => structGen(T, config),
         .@"enum" => enumGen(T),
+        .optional => |info| optionalGen(
+            info.child,
+            gen(info.child, if (@hasField(@TypeOf(config), "child_config"))
+                config.child_config
+            else
+                .{}),
+            config,
+        ),
         else => @compileError("Cannot generate values of type " ++ @typeName(T)),
     };
 }
@@ -231,6 +239,31 @@ fn enumGen(comptime T: type) Generator(T) {
                 _ = allocator;
                 const index = random.intRangeLessThan(usize, 0, enum_info.fields.len);
                 return std.enums.values(T)[index];
+            }
+        }.generate,
+    };
+}
+
+fn optionalGen(comptime Child: type, child_gen: Generator(Child), config: anytype) Generator(?Child) {
+    // Default null probability if not specified
+    const null_prob: f32 = if (@hasField(@TypeOf(config), "null_probability"))
+        config.null_probability
+    else
+        0.5;
+
+    return Generator(?Child){
+        .generateFn = struct {
+            const ChildGen = child_gen;
+            const NullProb = null_prob;
+
+            fn generate(random: std.Random, size: usize, allocator: std.mem.Allocator) !?Child {
+                // Generate null with probability NullProb
+                if (random.float(f32) < NullProb) {
+                    return null;
+                } else {
+                    // Otherwise generate a value of the child type
+                    return try ChildGen.generate(random, size, allocator);
+                }
             }
         }.generate,
     };
