@@ -3,45 +3,41 @@ const std = @import("std");
 /// Get boundary values for integer types
 fn getIntBoundaryValues(comptime T: type, min_val: T, max_val: T, out_boundaries: []T) usize {
     var list = std.ArrayListUnmanaged(T).initBuffer(out_boundaries);
+    var max_included = false;
 
     // Always include min boundary
     list.appendAssumeCapacity(min_val);
+    if (min_val == max_val) max_included = true;
 
     if (min_val + 1 <= max_val) {
         list.appendAssumeCapacity(min_val + 1);
+        if (min_val + 1 == max_val) max_included = true;
     }
 
     // Include -1, 0, 1 if within range
     if (@typeInfo(T).int.signedness == .signed and min_val <= -1 and max_val >= -1) {
         list.appendAssumeCapacity(-1);
+        if (-1 == max_val) max_included = true;
     }
 
     if (min_val <= 0 and max_val >= 0) {
         list.appendAssumeCapacity(0);
+        if (0 == max_val) max_included = true;
     }
 
     if (min_val <= 1 and max_val >= 1) {
         list.appendAssumeCapacity(1);
+        if (1 == max_val) max_included = true;
     }
 
     if (max_val - 1 >= min_val) {
         list.appendAssumeCapacity(max_val - 1);
+        if (max_val - 1 == max_val) max_included = true; // This is always false, but kept for consistency
     }
 
     // Always include max boundary if not already included
-    if (min_val != max_val) {
-        // Check if max is already in the list
-        var max_included = false;
-        for (list.items) |item| {
-            if (item == max_val) {
-                max_included = true;
-                break;
-            }
-        }
-        
-        if (!max_included) {
-            list.appendAssumeCapacity(max_val);
-        }
+    if (!max_included) {
+        list.appendAssumeCapacity(max_val);
     }
 
     return list.items.len;
@@ -50,42 +46,53 @@ fn getIntBoundaryValues(comptime T: type, min_val: T, max_val: T, out_boundaries
 /// Get special values for float types
 fn getFloatSpecialValues(comptime T: type, min_val: T, max_val: T, out_values: []T) usize {
     var list = std.ArrayListUnmanaged(T).initBuffer(out_values);
+    var max_included = false;
 
-    // Always include min and max boundaries
+    // Always include min boundary
     list.appendAssumeCapacity(min_val);
-    if (min_val != max_val) {
-        list.appendAssumeCapacity(max_val);
-    }
+    if (min_val == max_val) max_included = true;
 
     // Include 0 if it's within range
     if (min_val <= 0 and max_val >= 0) {
         list.appendAssumeCapacity(0);
+        if (0 == max_val) max_included = true;
     }
 
     // Include -1 and 1 if within range
     if (min_val <= -1 and max_val >= -1) {
         list.appendAssumeCapacity(-1);
+        if (-1 == max_val) max_included = true;
     }
     if (min_val <= 1 and max_val >= 1) {
         list.appendAssumeCapacity(1);
+        if (1 == max_val) max_included = true;
     }
 
     // Include smallest normalized values if within range
     const smallest_pos = std.math.floatMin(T);
     if (min_val <= smallest_pos and max_val >= smallest_pos) {
         list.appendAssumeCapacity(smallest_pos);
+        if (smallest_pos == max_val) max_included = true;
     }
     const smallest_neg = -std.math.floatMin(T);
     if (min_val <= smallest_neg and max_val >= smallest_neg) {
         list.appendAssumeCapacity(smallest_neg);
+        if (smallest_neg == max_val) max_included = true;
     }
 
     // Include infinity if within range (only possible if max_val is infinity)
     if (max_val == std.math.inf(T)) {
         list.appendAssumeCapacity(std.math.inf(T));
+        max_included = true;
     }
     if (min_val == -std.math.inf(T)) {
         list.appendAssumeCapacity(-std.math.inf(T));
+        if (-std.math.inf(T) == max_val) max_included = true;
+    }
+
+    // Always include max boundary if not already included
+    if (!max_included) {
+        list.appendAssumeCapacity(max_val);
     }
 
     return list.items.len;
