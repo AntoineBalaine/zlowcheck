@@ -627,12 +627,12 @@ test "optional generator with custom null probability" {
 
     // The generator with higher null probability should produce more nulls
     try std.testing.expect(frequent_null_count > rare_null_count);
-    
+
     // Check that the null counts are roughly in line with the probabilities
     // (allowing for some statistical variation)
     const rare_null_ratio = @as(f32, @floatFromInt(rare_null_count)) / @as(f32, @floatFromInt(iterations));
     const frequent_null_ratio = @as(f32, @floatFromInt(frequent_null_count)) / @as(f32, @floatFromInt(iterations));
-    
+
     try std.testing.expect(rare_null_ratio < 0.2); // Should be close to 0.1
     try std.testing.expect(frequent_null_ratio > 0.8); // Should be close to 0.9
 }
@@ -696,7 +696,7 @@ test "pointer to array" {
     defer std.testing.allocator.destroy(array_ptr);
 
     try std.testing.expectEqual(@as(usize, 3), array_ptr.len);
-    
+
     // Each element should be a valid boolean
     for (array_ptr) |value| {
         try std.testing.expect(value == true or value == false);
@@ -842,7 +842,7 @@ test "union with slice fields" {
     // Generate a few values and check their constraints
     for (0..10) |_| {
         const data = try dataGenerator.generate(random, 10, std.testing.allocator);
-        
+
         // Use if/else instead of switch for the union
         if (data == .text) {
             const t = data.text;
@@ -852,10 +852,89 @@ test "union with slice fields" {
             const n = data.numbers;
             defer std.testing.allocator.free(n);
             try std.testing.expect(n.len >= 3 and n.len <= 6);
-            
+
             for (n) |num| {
                 try std.testing.expect(num >= -10 and num <= 10);
             }
+        }
+    }
+}
+
+test "vector generator produces vectors within range" {
+    // Generate @Vector(4, i32) vectors
+    const vectorGenerator = gen(@Vector(4, i32), .{
+        .child_config = .{ .min = -10, .max = 10 },
+    });
+
+    var prng = std.Random.DefaultPrng.init(42);
+    const random = prng.random();
+
+    // Generate a few vectors and check their values
+    for (0..10) |_| {
+        const vector = try vectorGenerator.generate(random, 10, std.testing.allocator);
+
+        // Check each element is within bounds
+        for (0..4) |i| {
+            const value = vector[i];
+            try std.testing.expect(value >= -10 and value <= 10);
+        }
+    }
+}
+
+test "vector generator with boolean elements" {
+    // Generate @Vector(8, bool) vectors
+    const boolVectorGenerator = gen(@Vector(8, bool), .{
+        .child_config = .{},
+    });
+
+    var prng = std.Random.DefaultPrng.init(42);
+    const random = prng.random();
+
+    // Generate several vectors to ensure we get both true and false values
+    var seen_true = false;
+    var seen_false = false;
+
+    for (0..10) |_| {
+        const vector = try boolVectorGenerator.generate(random, 10, std.testing.allocator);
+
+        for (0..8) |i| {
+            const value = vector[i];
+            if (value) seen_true = true else seen_false = true;
+        }
+
+        if (seen_true and seen_false) break;
+    }
+
+    // We should have seen both true and false values
+    try std.testing.expect(seen_true and seen_false);
+}
+
+test "vector generator with map function" {
+    // Generate @Vector(4, f32) vectors with elements between 0.0 and 1.0
+    const baseVectorGenerator = gen(@Vector(4, f32), .{
+        .child_config = .{ .min = 0.0, .max = 1.0 },
+    });
+
+    // Map to scale all elements by 10
+    const scaledVectorGenerator = baseVectorGenerator.map(@Vector(4, f32), struct {
+        fn scaleElements(vector: @Vector(4, f32)) @Vector(4, f32) {
+            const splt: @Vector(4, f32) = @splat(10.0);
+            return vector * splt;
+        }
+    }.scaleElements);
+
+    var prng = std.Random.DefaultPrng.init(42);
+    const random = prng.random();
+
+    // Generate vectors and check elements are scaled
+    for (0..10) |_| {
+        const vector = try scaledVectorGenerator.generate(random, 10, std.testing.allocator);
+
+        for (0..4) |i| {
+            const value = vector[i];
+            // Skip NaN and infinity checks
+            if (std.math.isNan(value) or std.math.isInf(value)) continue;
+            try std.testing.expect(value >= 0.0 and value <= 10.0);
         }
     }
 }

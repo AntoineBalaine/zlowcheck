@@ -83,6 +83,10 @@ pub fn gen(comptime T: type, config: anytype) Generator(T) {
                 .{}),
             config,
         ),
+        .vector => |info| vectorGen(info.child, info.len, gen(info.child, if (@hasField(@TypeOf(config), "child_config"))
+            config.child_config
+        else
+            @compileError("Expected 'child_config' field for vector type " ++ @typeName(T)))),
         else => @compileError("Cannot generate values of type " ++ @typeName(T)),
     };
 }
@@ -528,6 +532,22 @@ fn unionGen(comptime T: type, info: std.builtin.Type.Union, config: anytype) Gen
                 }
 
                 unreachable; // Should never reach here
+            }
+        }.generate,
+    };
+}
+
+/// Generate vectors
+fn vectorGen(comptime E: type, comptime len: usize, child_gen: Generator(E)) Generator(@Vector(len, E)) {
+    return Generator(@Vector(len, E)){
+        .generateFn = struct {
+            const ChildGen = child_gen;
+            fn generate(random: std.Random, size: usize, allocator: std.mem.Allocator) !@Vector(len, E) {
+                var result: [len]E = undefined;
+                for (&result) |*elem| {
+                    elem.* = try ChildGen.generate(random, size, allocator);
+                }
+                return @as(@Vector(len, E), result);
             }
         }.generate,
     };
