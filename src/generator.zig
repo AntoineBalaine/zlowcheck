@@ -156,16 +156,18 @@ pub fn gen(comptime T: type, config: anytype) Generator(T) {
             config.child_config
         else
             @compileError("Expected 'child_config' field for array type " ++ @typeName(T)))),
-        // .Pointer => |info| if (info.size == .Slice)
-        //     sliceGen(info.child, gen(info.child, config.child_config orelse {}), config)
-        // else
-        //     @compileError("Cannot generate pointers except slices"),
+        .pointer => |info| if (info.size == .slice)
+            sliceGen(info.child, gen(info.child, if (@hasField(@TypeOf(config), "child_config"))
+                config.child_config
+            else
+                @compileError("Expected 'child_config' field for slice type " ++ @typeName(T))), config)
+        else
+            @compileError("Cannot generate pointers except slices"),
         // .Struct => structGen(T, config),
         // .Enum => enumGen(T, config),
         else => @compileError("Cannot generate values of type " ++ @typeName(T)),
     };
 }
-
 /// Generate integers
 fn intGen(comptime T: type, config: anytype) Generator(T) {
     // Default values if not specified
@@ -242,14 +244,14 @@ fn boolGen(config: anytype) Generator(bool) {
 }
 
 /// Generate arrays
-fn arrayGen(comptime E: type, comptime len: usize, element_gen: Generator(E)) Generator([len]E) {
+fn arrayGen(comptime E: type, comptime len: usize, child_gen: Generator(E)) Generator([len]E) {
     return Generator([len]E){
         .generateFn = struct {
-            const ElemGen = element_gen;
+            const ChildGen = child_gen;
             fn generate(random: std.Random, size: usize, allocator: std.mem.Allocator) ![len]E {
                 var result: [len]E = undefined;
                 for (&result) |*elem| {
-                    elem.* = try ElemGen.generate(random, size, allocator);
+                    elem.* = try ChildGen.generate(random, size, allocator);
                 }
                 return result;
             }
@@ -257,30 +259,30 @@ fn arrayGen(comptime E: type, comptime len: usize, element_gen: Generator(E)) Ge
     };
 }
 
-// /// Generate slices
-// fn sliceGen(comptime E: type, element_gen: Generator(E), config: anytype) Generator([]E) {
-//     const min_len = if (@hasField(@TypeOf(config), "min_len")) config.min_len else 0;
-//     const max_len = if (@hasField(@TypeOf(config), "max_len")) config.max_len else 100;
-//
-//     return Generator([]E){
-//         .generateFn = struct {
-//             const ElemGen = element_gen;
-//             const MinLen = min_len;
-//             const MaxLen = max_len;
-//
-//             fn generate(random: std.Random, size: usize, allocator: std.mem.Allocator) ![]E {
-//                 const len = random.intRangeLessThan(usize, MinLen, MaxLen + 1);
-//                 const result = try allocator.alloc(E, len);
-//
-//                 for (result) |*elem| {
-//                     elem.* = try ElemGen.generate(random, size, allocator);
-//                 }
-//
-//                 return result;
-//             }
-//         }.generate,
-//     };
-// }
+/// Generate slices
+fn sliceGen(comptime E: type, child_gen: Generator(E), config: anytype) Generator([]E) {
+    const min_len = if (@hasField(@TypeOf(config), "min_len")) config.min_len else 0;
+    const max_len = if (@hasField(@TypeOf(config), "max_len")) config.max_len else 100;
+
+    return Generator([]E){
+        .generateFn = struct {
+            const ChildGen = child_gen;
+            const MinLen = min_len;
+            const MaxLen = max_len;
+
+            fn generate(random: std.Random, size: usize, allocator: std.mem.Allocator) ![]E {
+                const len = random.intRangeLessThan(usize, MinLen, MaxLen + 1);
+                const result = try allocator.alloc(E, len);
+
+                for (result) |*elem| {
+                    elem.* = try ChildGen.generate(random, size, allocator);
+                }
+
+                return result;
+            }
+        }.generate,
+    };
+}
 //
 // /// Generate structs
 // fn structGen(comptime T: type, config: anytype) Generator(T) {
