@@ -69,7 +69,7 @@ pub fn gen(comptime T: type, config: anytype) Generator(T) {
         else
             @compileError("Cannot generate pointers except slices"),
         .@"struct" => structGen(T, config),
-        // .Enum => enumGen(T, config),
+        .@"enum" => enumGen(T),
         else => @compileError("Cannot generate values of type " ++ @typeName(T)),
     };
 }
@@ -221,23 +221,21 @@ fn structGen(comptime T: type, config: anytype) Generator(T) {
     };
 }
 
-// /// Generate enum values
-// fn enumGen(comptime T: type, config: anytype) Generator(T) {
-//     _ = config; // Unused for now
-//     const fields = std.meta.fields(T);
-//
-//     return Generator(T){
-//         .generateFn = struct {
-//             fn generate(random: std.Random, size: usize, allocator: std.mem.Allocator) !T {
-//                 _ = size;
-//                 _ = allocator;
-//                 const index = random.intRangeLessThan(usize, 0, fields.len);
-//                 return @field(T, fields[index].name);
-//             }
-//         }.generate,
-//     };
-// }
-//
+/// Generate enum values
+fn enumGen(comptime T: type) Generator(T) {
+    const enum_info = @typeInfo(T).@"enum";
+    return Generator(T){
+        .generateFn = struct {
+            fn generate(random: std.Random, size: usize, allocator: std.mem.Allocator) !T {
+                _ = size;
+                _ = allocator;
+                const index = random.intRangeLessThan(usize, 0, enum_info.fields.len);
+                return std.enums.values(T)[index];
+            }
+        }.generate,
+    };
+}
+
 // /// Combine multiple generators with a tuple
 // pub fn tuple(comptime generators: anytype) Generator(std.meta.Tuple(&generators)) {
 //     const Tuple = std.meta.Tuple(&generators);

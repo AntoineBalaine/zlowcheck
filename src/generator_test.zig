@@ -475,3 +475,92 @@ test "nested struct generator works correctly" {
         try std.testing.expect(rect.bottom_right.y >= 20 and rect.bottom_right.y <= 30);
     }
 }
+
+test "enum generator produces valid enum values" {
+    const Color = enum {
+        red,
+        green,
+        blue,
+        yellow,
+        purple,
+    };
+
+    // Create a generator for the Color enum
+    const colorGenerator = gen(Color, .{});
+
+    var prng = std.Random.DefaultPrng.init(42);
+    const random = prng.random();
+
+    // Track which enum values we've seen
+    var seen = [_]bool{false} ** 5;
+
+    // Generate many values to ensure we get all enum variants
+    for (0..100) |_| {
+        const color = try colorGenerator.generate(random, 10, std.testing.allocator);
+
+        // Verify it's a valid enum value
+        switch (color) {
+            .red => seen[0] = true,
+            .green => seen[1] = true,
+            .blue => seen[2] = true,
+            .yellow => seen[3] = true,
+            .purple => seen[4] = true,
+        }
+    }
+
+    // We should have seen all enum values
+    for (seen, 0..) |was_seen, i| {
+        try std.testing.expect(was_seen);
+        if (!was_seen) {
+            std.debug.print("Didn't see enum value at index {d}\n", .{i});
+        }
+    }
+}
+
+test "enum generator with non-zero values" {
+    const Status = enum(u8) {
+        pending = 10,
+        active = 20,
+        completed = 30,
+        cancelled = 40,
+    };
+
+    // Create a generator for the Status enum
+    const statusGenerator = gen(Status, .{});
+
+    var prng = std.Random.DefaultPrng.init(42);
+    const random = prng.random();
+
+    // Track which enum values we've seen
+    var seen = [_]bool{false} ** 4;
+
+    // Generate many values to ensure we get all enum variants
+    for (0..100) |_| {
+        const status = try statusGenerator.generate(random, 10, std.testing.allocator);
+
+        // Verify it's a valid enum value
+        switch (status) {
+            .pending => seen[0] = true,
+            .active => seen[1] = true,
+            .completed => seen[2] = true,
+            .cancelled => seen[3] = true,
+        }
+
+        // Also verify the integer value is correct
+        const int_value = @intFromEnum(status);
+        switch (status) {
+            .pending => try std.testing.expectEqual(@as(u8, 10), int_value),
+            .active => try std.testing.expectEqual(@as(u8, 20), int_value),
+            .completed => try std.testing.expectEqual(@as(u8, 30), int_value),
+            .cancelled => try std.testing.expectEqual(@as(u8, 40), int_value),
+        }
+    }
+
+    // We should have seen all enum values
+    for (seen, 0..) |was_seen, i| {
+        try std.testing.expect(was_seen);
+        if (!was_seen) {
+            std.debug.print("Didn't see enum value at index {d}\n", .{i});
+        }
+    }
+}
