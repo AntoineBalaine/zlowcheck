@@ -50,6 +50,9 @@ pub fn Generator(comptime T: type) type {
 
 /// Core generator function that dispatches based on type
 pub fn gen(comptime T: type, config: anytype) Generator(T) {
+    if (@typeInfo(@TypeOf(config)) != .@"struct") {
+        @compileError("Config must be a struct, got " ++ @typeName(@TypeOf(config)));
+    }
     return switch (@typeInfo(T)) {
         .int => intGen(T, config),
         .float => floatGen(T, config),
@@ -65,11 +68,12 @@ pub fn gen(comptime T: type, config: anytype) Generator(T) {
                 @compileError("Expected 'child_config' field for slice type " ++ @typeName(T))), config)
         else
             @compileError("Cannot generate pointers except slices"),
-        // .Struct => structGen(T, config),
+        .@"struct" => structGen(T, config),
         // .Enum => enumGen(T, config),
         else => @compileError("Cannot generate values of type " ++ @typeName(T)),
     };
 }
+
 /// Generate integers
 fn intGen(comptime T: type, config: anytype) Generator(T) {
     // Default values if not specified
@@ -94,8 +98,12 @@ fn intGen(comptime T: type, config: anytype) Generator(T) {
                     return boundaries[index];
                 }
 
-                // Otherwise generate a random value in the range
-                return random.intRangeLessThan(T, Min, Max + 1);
+                if (Max == std.math.maxInt(T)) {
+                    // Special case for maximum value to avoid overflow
+                    return random.intRangeAtMost(T, Min, Max);
+                } else {
+                    return random.intRangeLessThan(T, Min, Max + 1);
+                }
             }
         }.generate,
     };
@@ -185,31 +193,34 @@ fn sliceGen(comptime E: type, child_gen: Generator(E), config: anytype) Generato
         }.generate,
     };
 }
-//
-// /// Generate structs
-// fn structGen(comptime T: type, config: anytype) Generator(T) {
-//     const fields = std.meta.fields(T);
-//
-//     return Generator(T){
-//         .generateFn = struct {
-//             fn generate(random: std.Random, size: usize, allocator: std.mem.Allocator) !T {
-//                 var result: T = undefined;
-//
-//                 inline for (fields) |field| {
-//                     const FieldType = field.type;
-//                     const field_config = if (@hasField(@TypeOf(config), field.name))
-//                         @field(config, field.name)
-//                     else {};
-//
-//                     @field(result, field.name) = try gen(FieldType, field_config).generate(random, size, allocator);
-//                 }
-//
-//                 return result;
-//             }
-//         }.generate,
-//     };
-// }
-//
+
+/// Generate structs
+fn structGen(comptime T: type, config: anytype) Generator(T) {
+    const fields = std.meta.fields(T);
+
+    return Generator(T){
+        .generateFn = struct {
+            fn generate(random: std.Random, size: usize, allocator: std.mem.Allocator) !T {
+                var result: T = undefined;
+
+                inline for (fields) |field| {
+                    const FieldType = field.type;
+
+                    // Get field-specific config if available
+                    const field_config = if (@hasField(@TypeOf(config), field.name))
+                        @field(config, field.name)
+                    else
+                        .{};
+
+                    @field(result, field.name) = try gen(FieldType, field_config).generate(random, size, allocator);
+                }
+
+                return result;
+            }
+        }.generate,
+    };
+}
+
 // /// Generate enum values
 // fn enumGen(comptime T: type, config: anytype) Generator(T) {
 //     _ = config; // Unused for now

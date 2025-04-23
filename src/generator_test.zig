@@ -411,3 +411,67 @@ test "nested slice generator works correctly" {
         }
     }
 }
+
+test "struct generator works correctly" {
+    const Point = struct {
+        x: i32,
+        y: i32,
+    };
+
+    // Generate Point structs with x between 0-10 and y between -5-5
+    const pointGenerator = gen(Point, .{
+        .x = .{ .min = 0, .max = 10 },
+        .y = .{ .min = -5, .max = 5 },
+    });
+
+    var prng = std.Random.DefaultPrng.init(42);
+    const random = prng.random();
+
+    // Generate points and check field bounds
+    for (0..10) |_| {
+        const point = try pointGenerator.generate(random, 10, std.testing.allocator);
+
+        try std.testing.expect(point.x >= 0 and point.x <= 10);
+        try std.testing.expect(point.y >= -5 and point.y <= 5);
+    }
+}
+
+test "nested struct generator works correctly" {
+    const Point = struct {
+        x: i32,
+        y: i32,
+    };
+
+    const Rectangle = struct {
+        top_left: Point,
+        bottom_right: Point,
+    };
+
+    // Generate Rectangle structs with specific constraints using direct configuration
+    const rectGenerator = gen(Rectangle, .{
+        .top_left = .{
+            .x = .{ .min = 0, .max = 10 },
+            .y = .{ .min = 0, .max = 10 },
+        },
+        .bottom_right = .{
+            .x = .{ .min = 20, .max = 30 },
+            .y = .{ .min = 20, .max = 30 },
+        },
+    });
+
+    var prng = std.Random.DefaultPrng.init(42);
+    const random = prng.random();
+
+    // Generate rectangles and check field bounds
+    for (0..10) |_| {
+        const rect = try rectGenerator.generate(random, 10, std.testing.allocator);
+
+        // Check top_left point
+        try std.testing.expect(rect.top_left.x >= 0 and rect.top_left.x <= 10);
+        try std.testing.expect(rect.top_left.y >= 0 and rect.top_left.y <= 10);
+
+        // Check bottom_right point
+        try std.testing.expect(rect.bottom_right.x >= 20 and rect.bottom_right.x <= 30);
+        try std.testing.expect(rect.bottom_right.y >= 20 and rect.bottom_right.y <= 30);
+    }
+}
