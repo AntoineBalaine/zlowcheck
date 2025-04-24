@@ -122,205 +122,21 @@ pub fn Generator(comptime T: type) type {
         /// Map a generator to a new type
         /// The map function provides a mechanism that allows us to apply a transform to a generated datum. And in the case where we need to shrink that datum (upon a predicate failure), it also provides a mechanism to: revert the transform, shrink, and re-apply. This unmap/shrink/remap can be applied for values coming from a generator, and also for values that have been provided without a generator. This allows library consumers to run pbt with pre-defined values, instead of being prisonners of the generators.
         /// When it comes to un-map data coming from generators,it’s possible to confidently do so using the original generator’s context and the original value. For values not coming from a generator, we have to rely on a user-provided unmap function which can apply the reverse transform - though the confidence level with this approach is lower, since it’s not provided by the library.
-        pub fn map(self: Self, comptime U: type, mapFn: fn (T) U, unmapFn: ?fn (U) ?T) Generator(U) {
-            const MapContext = struct {
-                original_value: T,
-                original_context: ?*anyopaque,
-                context_deinit: ?*const fn (?*anyopaque, std.mem.Allocator) void,
-
-                /// Free resources associated with this context
-                fn deinit(ctx: ?*anyopaque, allocator: std.mem.Allocator) void {
-                    if (ctx) |ptr| {
-                        const self_ctx: *@This() = @ptrCast(@alignCast(ptr));
-                        if (self_ctx.original_context != null and self_ctx.context_deinit != null) {
-                            self_ctx.context_deinit.?(self_ctx.original_context, allocator);
-                        }
-                        allocator.destroy(self_ctx);
-                    }
-                }
-            };
-            return Generator(U){
-                .generateFn = (struct {
-                    const parent_generator = self;
-                    const map_function: fn (T) U = mapFn;
-
-                    /// Context for mapped values
-                    fn generate(random: std.Random, size: usize, allocator: std.mem.Allocator) error{OutOfMemory}!Value(U) {
-                        // Generate original value with context
-                        const original = try parent_generator.generate(random, size, allocator);
-
-                        // Map the value
-                        const mapped_value = map_function(original.value);
-
-                        // Create a new context that references the original
-                        const context = try allocator.create(MapContext);
-                        context.* = .{
-                            .original_value = original.value,
-                            .original_context = original.context,
-                            .context_deinit = original.context_deinit,
-                        };
-
-                        return Value(U).init(
-                            mapped_value,
-                            @as(*anyopaque, @ptrCast(context)),
-                            MapContext.deinit,
-                        );
-                    }
-                }).generate,
-
-                .shrinkFn = (struct {
-                    const parent_generator = self;
-                    const map_function: fn (T) U = mapFn;
-                    const unmap_function: ?fn (U) ?T = unmapFn;
-
-                    fn shrink(value: U, context: ?*anyopaque, allocator: std.mem.Allocator) error{OutOfMemory}!ValueList(U) {
-                        if (context) |ctx_ptr| {
-                            // We have context, use it for smart shrinking
-                            const map_ctx: *MapContext = @ptrCast(@alignCast(ctx_ptr));
-
-                            // Shrink the original value
-                            const shrunk_originals = try parent_generator.shrink(
-                                map_ctx.original_value,
-                                map_ctx.original_context,
-                                allocator,
-                            );
-                            defer shrunk_originals.deinit();
-
-                            // Map each shrunk value
-                            var shrunk_mapped = try allocator.alloc(Value(U), shrunk_originals.len());
-
-                            for (shrunk_originals.values, 0..) |shrunk_original, i| {
-                                // Create a new context for each shrunk value
-                                const new_ctx = try allocator.create(MapContext);
-                                new_ctx.* = .{
-                                    .original_value = shrunk_original.value,
-                                    .original_context = shrunk_original.context,
-                                    .context_deinit = shrunk_original.context_deinit,
-                                };
-
-                                // Map the shrunk value
-                                const mapped_value = map_function(shrunk_original.value);
-
-                                // Store the result
-                                shrunk_mapped[i] = Value(U).init(
-                                    mapped_value,
-                                    @as(*anyopaque, @ptrCast(new_ctx)),
-                                    MapContext.deinit,
-                                );
-                            }
-
-                            return ValueList(U).init(shrunk_mapped, allocator);
-                        } else if (unmap_function) |unmap| {
-                            // No context but we have an unmapping function
-                            if (unmap(value)) |original| {
-                                if (parent_generator.canShrinkWithoutContext(original)) {
-                                    // Shrink the unmapped value
-                                    const shrunk_originals = try parent_generator.shrink(original, null, allocator);
-                                    defer shrunk_originals.deinit();
-
-                                    // Map each shrunk value
-                                    var shrunk_mapped = try allocator.alloc(Value(U), shrunk_originals.len());
-
-                                    for (shrunk_originals.values, 0..) |shrunk_original, i| {
-                                        shrunk_mapped[i] = Value(U).initNoContext(map_function(shrunk_original.value));
-                                    }
-
-                                    return ValueList(U).init(shrunk_mapped, allocator);
-                                }
-                            }
-                        }
-
-                        // Can't shrink without proper context
-                        return ValueList(U).init(&[_]Value(U){}, allocator);
-                    }
-                }).shrink,
-
-                .canShrinkWithoutContextFn = (struct {
-                    const parent_generator = self;
-                    const unmap_function: ?fn (U) ?T = unmapFn;
-
-                    fn canShrinkWithoutContext(value: U) bool {
-                        if (unmap_function) |unmap| {
-                            if (unmap(value)) |original| {
-                                return parent_generator.canShrinkWithoutContext(original);
-                            }
-                        }
-                        return false;
-                    }
-                }).canShrinkWithoutContext,
+        pub fn map(self: Self, comptime U: type, mapFn: *const fn (T) U, unmapFn: ?*const fn (U) ?T) MappedGenerator(T, U) {
+            return MappedGenerator(T, U){
+                .parent = &self,
+                .map_fn = mapFn,
+                .unmap_fn = unmapFn,
             };
         }
 
         /// Filter generated values
         ///
         /// Similarly to the map function, the filter function applies a filter to a generator’s output list. For sanity’s sake, the filter is only allowed to run 100 unsuccessful tries. Any value that is filtered out is de-initialized. When it comes to shrinking, Filter’s shrink() will call the original generator’s shrink method and reapply the filtering.
-        pub fn filter(self: Self, filterFn: fn (T) bool) Generator(T) {
-            return Generator(T){
-                .generateFn = (struct {
-                    const parent_generator = self;
-                    const filter_function: fn (T) bool = filterFn;
-
-                    fn generate(random: std.Random, size: usize, allocator: std.mem.Allocator) error{OutOfMemory}!Value(T) {
-                        // Try a limited number of times to find a value that passes the filter
-                        var attempts: usize = 0;
-                        const max_attempts = 100;
-
-                        while (attempts < max_attempts) : (attempts += 1) {
-                            const value = try parent_generator.generate(random, size, allocator);
-                            if (filter_function(value.value)) return value;
-
-                            // Clean up the rejected value
-                            value.deinit(allocator);
-                        }
-
-                        // If we can't find a value after max attempts, return the last one anyway
-                        return parent_generator.generate(random, size, allocator);
-                    }
-                }).generate,
-
-                .shrinkFn = (struct {
-                    const parent_generator = self;
-                    const filter_function: fn (T) bool = filterFn;
-
-                    fn shrink(value: T, context: ?*anyopaque, allocator: std.mem.Allocator) error{OutOfMemory}!ValueList(T) {
-                        // Get all possible shrinks from the parent generator
-                        const all_shrinks = try parent_generator.shrink(value, context, allocator);
-                        defer all_shrinks.deinit();
-
-                        // Count how many values pass the filter
-                        var passing_count: usize = 0;
-                        for (all_shrinks.values) |shrnk| {
-                            if (filter_function(shrnk.value)) passing_count += 1;
-                        }
-
-                        // Allocate space for the filtered shrinks
-                        var filtered_shrinks = try allocator.alloc(Value(T), passing_count);
-
-                        // Copy only the values that pass the filter
-                        var index: usize = 0;
-                        for (all_shrinks.values) |shrnk| {
-                            if (filter_function(shrnk.value)) {
-                                filtered_shrinks[index] = shrnk;
-                                index += 1;
-                            } else {
-                                // Clean up the rejected value
-                                shrnk.deinit(allocator);
-                            }
-                        }
-
-                        return ValueList(T).init(filtered_shrinks, allocator);
-                    }
-                }).shrink,
-
-                .canShrinkWithoutContextFn = (struct {
-                    const parent_generator = self;
-                    const filter_function: fn (T) bool = filterFn;
-
-                    fn canShrinkWithoutContext(value: T) bool {
-                        // We can only shrink if the parent can shrink and the value passes the filter
-                        return parent_generator.canShrinkWithoutContext(value) and filter_function(value);
-                    }
-                }).canShrinkWithoutContext,
+        pub fn filter(self: Self, filterFn: *const fn (T) bool) FilteredGenerator(T) {
+            return FilteredGenerator(T){
+                .parent = &self,
+                .filter_fn = filterFn,
             };
         }
     };
@@ -625,8 +441,8 @@ pub fn MappedGenerator(comptime T: type, comptime U: type) type {
         parent: *const Generator(T),
 
         /// Mapping functions
-        map_fn: fn (T) U,
-        unmap_fn: ?fn (U) ?T,
+        map_fn: *const fn (T) U,
+        unmap_fn: ?*const fn (U) ?T,
 
         /// Context for mapped values
         const MapContext = struct {
@@ -740,37 +556,6 @@ pub fn MappedGenerator(comptime T: type, comptime U: type) type {
             }
             return false;
         }
-
-        /// Convert to a standard Generator
-        pub fn asGenerator(self: MappedSelf) Generator(U) {
-            const wrapper = struct {
-                var instance: MappedSelf = undefined;
-
-                fn init(mapped: MappedSelf) void {
-                    instance = mapped;
-                }
-
-                fn generateFn(random: std.Random, size: usize, allocator: std.mem.Allocator) error{OutOfMemory}!Value(U) {
-                    return instance.generate(random, size, allocator);
-                }
-
-                fn shrinkFn(value: U, context: ?*anyopaque, allocator: std.mem.Allocator) error{OutOfMemory}!ValueList(U) {
-                    return instance.shrink(value, context, allocator);
-                }
-
-                fn canShrinkWithoutContextFn(value: U) bool {
-                    return instance.canShrinkWithoutContext(value);
-                }
-            };
-
-            wrapper.init(self);
-
-            return Generator(U){
-                .generateFn = wrapper.generateFn,
-                .shrinkFn = wrapper.shrinkFn,
-                .canShrinkWithoutContextFn = wrapper.canShrinkWithoutContextFn,
-            };
-        }
     };
 }
 
@@ -786,7 +571,7 @@ pub fn FilteredGenerator(comptime T: type) type {
         parent: *const Generator(T),
 
         /// Filter function
-        filter_fn: fn (T) bool,
+        filter_fn: *const fn (T) bool,
 
         /// Generate a value that passes the filter
         pub fn generate(self: FilteredSelf, random: std.Random, size: usize, allocator: std.mem.Allocator) error{OutOfMemory}!Value(T) {
@@ -840,37 +625,6 @@ pub fn FilteredGenerator(comptime T: type) type {
         pub fn canShrinkWithoutContext(self: FilteredSelf, value: T) bool {
             // We can only shrink if the parent can shrink and the value passes the filter
             return self.parent.canShrinkWithoutContext(value) and self.filter_fn(value);
-        }
-
-        /// Convert to a standard Generator
-        pub fn asGenerator(self: FilteredSelf) Generator(T) {
-            const wrapper = struct {
-                var instance: FilteredSelf = undefined;
-
-                fn init(filtered: FilteredSelf) void {
-                    instance = filtered;
-                }
-
-                fn generateFn(random: std.Random, size: usize, allocator: std.mem.Allocator) error{OutOfMemory}!Value(T) {
-                    return instance.generate(random, size, allocator);
-                }
-
-                fn shrinkFn(value: T, context: ?*anyopaque, allocator: std.mem.Allocator) error{OutOfMemory}!ValueList(T) {
-                    return instance.shrink(value, context, allocator);
-                }
-
-                fn canShrinkWithoutContextFn(value: T) bool {
-                    return instance.canShrinkWithoutContext(value);
-                }
-            };
-
-            wrapper.init(self);
-
-            return Generator(T){
-                .generateFn = wrapper.generateFn,
-                .shrinkFn = wrapper.shrinkFn,
-                .canShrinkWithoutContextFn = wrapper.canShrinkWithoutContextFn,
-            };
         }
     };
 }
