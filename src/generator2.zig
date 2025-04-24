@@ -88,13 +88,13 @@ pub fn Generator(comptime T: type) type {
         pub const ValueType = T;
 
         /// Function that generates values with context
-        generateFn: fn (random: std.Random, size: usize, allocator: std.mem.Allocator) error{OutOfMemory}!Value(T),
+        generateFn: *const fn (random: std.Random, size: usize, allocator: std.mem.Allocator) error{OutOfMemory}!Value(T),
 
         /// Function that shrinks values using their context
-        shrinkFn: fn (value: T, context: ?*anyopaque, allocator: std.mem.Allocator) error{OutOfMemory}!ValueList(T),
+        shrinkFn: *const fn (value: T, context: ?*anyopaque, allocator: std.mem.Allocator) error{OutOfMemory}!ValueList(T),
 
         /// Function that checks if a value can be shrunk without context
-        canShrinkWithoutContextFn: fn (value: T) bool,
+        canShrinkWithoutContextFn: *const fn (value: T) bool,
 
         /// Generate a value with its context
         pub fn generate(self: Self, random: std.Random, size: usize, allocator: std.mem.Allocator) error{OutOfMemory}!Value(T) {

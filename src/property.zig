@@ -35,15 +35,15 @@ pub fn Property(comptime T: type) type {
         generator: Generator(T),
 
         /// The predicate function that tests each value
-        predicate: fn (T) bool,
+        predicate: *const fn (T) bool,
 
         /// Setup function context and callback
         before_each_context: ?*anyopaque = null,
-        before_each_fn: ?fn (*anyopaque) void = null,
+        before_each_fn: ?*const fn (*anyopaque) void = null,
 
         /// Teardown function context and callback
         after_each_context: ?*anyopaque = null,
-        after_each_fn: ?fn (*anyopaque) void = null,
+        after_each_fn: ?*const fn (*anyopaque) void = null,
 
         /// Create a new property from a generator and predicate
         pub fn init(generator: Generator(T), predicate: fn (T) bool) Self {
@@ -161,7 +161,7 @@ pub fn Property(comptime T: type) type {
 
         /// Run the property check for a specific number of iterations
         pub fn check(self: Self, allocator: std.mem.Allocator, iterations: usize, seed: u64) !PropertyResult {
-            var prng = std.rand.DefaultPrng.init(seed);
+            var prng = std.Random.DefaultPrng.init(seed);
             const random = prng.random();
 
             var result = PropertyResult{
