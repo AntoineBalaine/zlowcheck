@@ -97,12 +97,12 @@ pub fn Generator(comptime T: type) type {
         canShrinkWithoutContextFn: fn (value: T) bool,
 
         /// Generate a value with its context
-        pub fn generate(self: Self, random: std.Random, size: usize, allocator: std.mem.Allocator) !Value(T) {
+        pub fn generate(self: Self, random: std.Random, size: usize, allocator: std.mem.Allocator) error{OutOfMemory}!Value(T) {
             return self.generateFn(random, size, allocator);
         }
 
         /// Shrink a value using its context
-        pub fn shrink(self: Self, value: T, context: ?*anyopaque, allocator: std.mem.Allocator) !ValueList(T) {
+        pub fn shrink(self: Self, value: T, context: ?*anyopaque, allocator: std.mem.Allocator) error{OutOfMemory}!ValueList(T) {
             return self.shrinkFn(value, context, allocator);
         }
 
@@ -138,7 +138,7 @@ pub fn Generator(comptime T: type) type {
                         }
                     };
 
-                    fn generate(random: std.Random, size: usize, allocator: std.mem.Allocator) !Value(U) {
+                    fn generate(random: std.Random, size: usize, allocator: std.mem.Allocator) error{OutOfMemory}!Value(U) {
                         // Generate original value with context
                         const original = try ParentGenerator.generate(random, size, allocator);
 
@@ -167,7 +167,7 @@ pub fn Generator(comptime T: type) type {
                     const UnmapFunction = unmapFn;
                     const MapContext = @TypeOf(generate).MapContext;
 
-                    fn shrink(value: U, context: ?*anyopaque, allocator: std.mem.Allocator) !ValueList(U) {
+                    fn shrink(value: U, context: ?*anyopaque, allocator: std.mem.Allocator) error{OutOfMemory}!ValueList(U) {
                         if (context) |ctx_ptr| {
                             // We have context, use it for smart shrinking
                             const map_ctx: *MapContext = @ptrCast(@alignCast(ctx_ptr));
@@ -253,7 +253,7 @@ pub fn Generator(comptime T: type) type {
                     const ParentGenerator = self;
                     const FilterFunction = filterFn;
 
-                    fn generate(random: std.Random, size: usize, allocator: std.mem.Allocator) !Value(T) {
+                    fn generate(random: std.Random, size: usize, allocator: std.mem.Allocator) error{OutOfMemory}!Value(T) {
                         // Try a limited number of times to find a value that passes the filter
                         var attempts: usize = 0;
                         const max_attempts = 100;
@@ -275,7 +275,7 @@ pub fn Generator(comptime T: type) type {
                     const ParentGenerator = self;
                     const FilterFunction = filterFn;
 
-                    fn shrink(value: T, context: ?*anyopaque, allocator: std.mem.Allocator) !ValueList(T) {
+                    fn shrink(value: T, context: ?*anyopaque, allocator: std.mem.Allocator) error{OutOfMemory}!ValueList(T) {
                         // Get all possible shrinks from the parent generator
                         const all_shrinks = try ParentGenerator.shrink(value, context, allocator);
                         defer all_shrinks.deinit();
@@ -367,7 +367,7 @@ fn intGen(comptime T: type, config: anytype) Generator(T) {
             const Min = min;
             const Max = max;
 
-            fn generate(random: std.Random, size: usize, allocator: std.mem.Allocator) !Value(T) {
+            fn generate(random: std.Random, size: usize, allocator: std.mem.Allocator) error{OutOfMemory}!Value(T) {
                 _ = size;
                 _ = allocator;
 
@@ -393,7 +393,7 @@ fn intGen(comptime T: type, config: anytype) Generator(T) {
             const Min = min;
             const Max = max;
 
-            fn shrink(value: T, context: ?*anyopaque, allocator: std.mem.Allocator) !ValueList(T) {
+            fn shrink(value: T, context: ?*anyopaque, allocator: std.mem.Allocator) error{OutOfMemory}!ValueList(T) {
                 // Use the generic int shrinking logic
                 const all_shrinks = try intShrink(T, value, context, allocator);
                 var valid_count: usize = 0;
@@ -479,13 +479,126 @@ fn getIntBoundaryValues(comptime T: type, min_val: T, max_val: T, out_boundaries
     return list.items.len;
 }
 
-/// Core generator function that dispatches based on type (for now, just integer support)
+/// Generator for struct types
+fn structGen(comptime T: type, config: anytype) Generator(T) {
+    // Validate that all fields in config match fields in T
+    const struct_info = @typeInfo(T).@"struct";
+    inline for (@typeInfo(@TypeOf(config)).@"struct".fields) |field| {
+        const field_name = field.name;
+        if (!@hasField(T, field_name)) {
+            @compileError("Config has field '" ++ field_name ++ "' which doesn't exist in " ++ @typeName(T));
+        }
+    }
+
+    return Generator(T){
+        .generateFn = struct {
+            fn generate(random: std.Random, size: usize, allocator: std.mem.Allocator) error{OutOfMemory}!Value(T) {
+
+                // Create a struct context to hold all field contexts
+                const StructContext = struct {
+                    // Dynamic array to hold field contexts
+                    field_contexts: std.ArrayList(*anyopaque),
+                    field_deinits: std.ArrayList(fn (?*anyopaque, std.mem.Allocator) void),
+
+                    fn deinit(ctx: ?*anyopaque, alloc: std.mem.Allocator) void {
+                        if (ctx) |ptr| {
+                            const self_ctx = @as(*@This(), @ptrCast(@alignCast(ptr)));
+
+                            // Call deinit on each field context
+                            for (self_ctx.field_contexts.items, self_ctx.field_deinits.items) |field_ctx, deinit_fn| {
+                                if (deinit_fn != null) {
+                                    deinit_fn(field_ctx, alloc);
+                                }
+                            }
+
+                            // Free the arrays
+                            self_ctx.field_contexts.deinit();
+                            self_ctx.field_deinits.deinit();
+
+                            // Free the context itself
+                            alloc.destroy(self_ctx);
+                        }
+                    }
+                };
+
+                // Create the context
+                var context = try allocator.create(StructContext);
+                context.* = .{
+                    .field_contexts = std.ArrayList(*anyopaque).init(allocator),
+                    .field_deinits = std.ArrayList(fn (?*anyopaque, std.mem.Allocator) void).init(allocator),
+                };
+
+                // Initialize the result struct
+                var result: T = undefined;
+
+                // Generate each field
+                inline for (struct_info.fields) |field| {
+                    const field_name = field.name;
+                    const FieldType = field.type;
+
+                    // Check if we have a generator config for this field
+                    if (@hasField(@TypeOf(config), field_name)) {
+                        const field_config = @field(config, field_name);
+                        const field_generator = gen(FieldType, field_config);
+
+                        // Generate the field value
+                        const field_value = try field_generator.generate(random, size, allocator);
+
+                        // Store the value
+                        @field(result, field_name) = field_value.value;
+
+                        // Store the context if any
+                        if (field_value.context != null) {
+                            try context.field_contexts.append(field_value.context.?);
+                            try context.field_deinits.append(field_value.context_deinit.?);
+                        } else {
+                            try context.field_contexts.append(null);
+                            try context.field_deinits.append(null);
+                        }
+                    } else {
+                        // No config for this field, use default if possible
+                        if (@hasDecl(FieldType, "default")) {
+                            @field(result, field_name) = FieldType.default;
+                        } else {
+                            @compileError("No generator config provided for field '" ++ field_name ++ "' in " ++ @typeName(T));
+                        }
+                    }
+                }
+
+                return Value(T).init(
+                    result,
+                    @as(*anyopaque, @ptrCast(context)),
+                    StructContext.deinit,
+                );
+            }
+        }.generate,
+
+        .shrinkFn = struct {
+            fn shrink(value: T, context: ?*anyopaque, allocator: std.mem.Allocator) error{OutOfMemory}!ValueList(T) {
+                _ = value;
+                _ = context;
+                // For now, we don't implement struct shrinking
+                return ValueList(T).init(&[_]Value(T){}, allocator);
+            }
+        }.shrink,
+
+        .canShrinkWithoutContextFn = struct {
+            fn canShrinkWithoutContext(value: T) bool {
+                _ = value;
+                return false; // Structs need context for proper shrinking
+            }
+        }.canShrinkWithoutContext,
+    };
+}
+
+/// Core generator function that dispatches based on type
 pub fn gen(comptime T: type, config: anytype) Generator(T) {
     if (@typeInfo(@TypeOf(config)) != .@"struct") {
         @compileError("Config must be a struct, got " ++ @typeName(@TypeOf(config)));
     }
     return switch (@typeInfo(T)) {
         .int => intGen(T, config),
+        .@"struct" => structGen(T, config),
         // Additional generator types could be added here
         else => @compileError("Cannot generate values of type " ++ @typeName(T)),
     };

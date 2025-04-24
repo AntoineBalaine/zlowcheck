@@ -212,41 +212,56 @@ test "property with hooks" {
     var setup_called: usize = 0;
     var teardown_called: usize = 0;
 
-    const SetupContext = struct {
-        counter: *usize,
-
-        pub fn setup(self: *@This()) void {
-            self.counter.* += 1;
-        }
-    };
-
-    const TeardownContext = struct {
-        counter: *usize,
-
-        pub fn teardown(self: *@This()) void {
-            self.counter.* += 1;
-        }
-    };
-
-    var setup_ctx = SetupContext{ .counter = &setup_called };
-    var teardown_ctx = TeardownContext{ .counter = &teardown_called };
-
     // Create a property with hooks
     var prop = property_fn(i32, gen(i32, .{ .min = 1, .max = 10 }), struct {
         fn test_(n: i32) bool {
             return n > 0; // Always true for our range
         }
-    }.test_).beforeEach(struct {
-        ptr: *usize,
-        fn setup(self: @This()) void {
-            self.ptr.* += 1;
+    }.test_)
+        .beforeEach(&setup_called, struct {
+            fn hook(counter: *usize) void {
+                counter.* += 1;
+            }
+        }.hook)
+        .afterEach(&teardown_called, struct {
+        fn hook(counter: *usize) void {
+            counter.* += 1;
         }
-    }.setup).afterEach(struct {
-        ptr: *usize,
-        fn teardown(self: @This()) void {
-            self.ptr.* += 1;
+    }.hook);
+
+    // Run the property test
+    const result = try prop.check(std.testing.allocator, 10, 42);
+
+    // Should succeed
+    try std.testing.expect(result.success);
+
+    // Hooks should have been called once per test case
+    try std.testing.expectEqual(@as(usize, 10), setup_called);
+    try std.testing.expectEqual(@as(usize, 10), teardown_called);
+}
+
+test "property with context-less hooks" {
+    // Setup state for hooks
+    var setup_called: usize = 0;
+    var teardown_called: usize = 0;
+
+    // Create a property with context-less hooks that use pointers
+    var prop = property_fn(i32, gen(i32, .{ .min = 1, .max = 10 }), struct {
+        fn test_(n: i32) bool {
+            return n > 0; // Always true for our range
         }
-    }.teardown);
+    }.test_)
+        // Pass pointers to the counters as context
+        .beforeEach(&setup_called, struct {
+            fn hook(counter: *usize) void {
+                counter.* += 1;
+            }
+        }.hook)
+        .afterEach(&teardown_called, struct {
+        fn hook(counter: *usize) void {
+            counter.* += 1;
+        }
+    }.hook);
 
     // Run the property test
     const result = try prop.check(std.testing.allocator, 10, 42);
@@ -275,7 +290,7 @@ test "property test finds minimal failing example" {
 
     // The counterexample should be the minimal failing example: 9 or less
     if (result.counterexample) |counter_ptr| {
-        const counterexample: *const i32 = @ptrCast(counter_ptr).*;
+        const counterexample = @as(*const i32, @ptrCast(counter_ptr)).*;
         try std.testing.expect(counterexample < 10);
 
         // In the ideal case, shrinking should find exactly 0
