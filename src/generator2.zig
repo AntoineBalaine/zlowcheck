@@ -323,8 +323,8 @@ fn structGen(comptime T: type, config: anytype) Generator(T) {
                 // Create a struct context to hold all field contexts
                 const StructContext = struct {
                     // Dynamic array to hold field contexts
-                    field_contexts: std.ArrayList(*anyopaque),
-                    field_deinits: std.ArrayList(*const fn (?*anyopaque, std.mem.Allocator) void),
+                    field_contexts: std.ArrayList(?*anyopaque),
+                    field_deinits: std.ArrayList(?*const fn (?*anyopaque, std.mem.Allocator) void),
 
                     fn deinit(ctx: ?*anyopaque, alloc: std.mem.Allocator) void {
                         if (ctx) |ptr| {
@@ -332,8 +332,8 @@ fn structGen(comptime T: type, config: anytype) Generator(T) {
 
                             // Call deinit on each field context
                             for (self_ctx.field_contexts.items, self_ctx.field_deinits.items) |field_ctx, deinit_fn| {
-                                if (deinit_fn != null) {
-                                    deinit_fn(field_ctx, alloc);
+                                if (deinit_fn) |deinit_fn_| {
+                                    deinit_fn_(field_ctx, alloc);
                                 }
                             }
 
@@ -350,8 +350,8 @@ fn structGen(comptime T: type, config: anytype) Generator(T) {
                 // Create the context
                 var context = try allocator.create(StructContext);
                 context.* = .{
-                    .field_contexts = std.ArrayList(*anyopaque).init(allocator),
-                    .field_deinits = std.ArrayList(fn (?*anyopaque, std.mem.Allocator) void).init(allocator),
+                    .field_contexts = std.ArrayList(?*anyopaque).init(allocator),
+                    .field_deinits = std.ArrayList(?*const fn (?*anyopaque, std.mem.Allocator) void).init(allocator),
                 };
 
                 // Initialize the result struct
