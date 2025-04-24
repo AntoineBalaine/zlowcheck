@@ -16,10 +16,10 @@ pub fn Value(comptime T: type) type {
 
         /// Context destructor function (if any)
         /// This is called when the value is no longer needed
-        context_deinit: ?fn (?*anyopaque, std.mem.Allocator) void,
+        context_deinit: ?*const fn (?*anyopaque, std.mem.Allocator) void,
 
         /// Initialize a new Value with a given value and context
-        pub fn init(value: T, context: ?*anyopaque, context_deinit: ?fn (?*anyopaque, std.mem.Allocator) void) Self {
+        pub fn init(value: T, context: ?*anyopaque, context_deinit: ?*const fn (?*anyopaque, std.mem.Allocator) void) Self {
             return .{
                 .value = value,
                 .context = context,
@@ -124,7 +124,7 @@ pub fn Generator(comptime T: type) type {
                     const MapContext = struct {
                         original_value: T,
                         original_context: ?*anyopaque,
-                        context_deinit: ?fn (?*anyopaque, std.mem.Allocator) void,
+                        context_deinit: ?*const fn (?*anyopaque, std.mem.Allocator) void,
 
                         /// Free resources associated with this context
                         fn deinit(ctx: ?*anyopaque, allocator: std.mem.Allocator) void {
@@ -498,7 +498,7 @@ fn structGen(comptime T: type, config: anytype) Generator(T) {
                 const StructContext = struct {
                     // Dynamic array to hold field contexts
                     field_contexts: std.ArrayList(*anyopaque),
-                    field_deinits: std.ArrayList(fn (?*anyopaque, std.mem.Allocator) void),
+                    field_deinits: std.ArrayList(*const fn (?*anyopaque, std.mem.Allocator) void),
 
                     fn deinit(ctx: ?*anyopaque, alloc: std.mem.Allocator) void {
                         if (ctx) |ptr| {
