@@ -92,8 +92,8 @@ test "map with shrinking" {
         }
     }.double, struct {
         fn halve(n: i32) ?i32 {
-            if (n % 2 == 0) {
-                return n / 2;
+            if (@rem(n, 2) == 0) {
+                return @divTrunc(n, 2);
             }
             return null; // Can't unmapped odd numbers
         }
@@ -108,7 +108,7 @@ test "map with shrinking" {
 
     // Value should be even and between 2 and 200
     try std.testing.expect(value.value >= 2 and value.value <= 200);
-    try std.testing.expect(value.value % 2 == 0);
+    try std.testing.expect(@rem(value.value, 2) == 0);
 
     // Shrink the value
     const shrinks = try doubledGenerator.shrink(value.value, value.context, std.testing.allocator);
@@ -120,7 +120,7 @@ test "map with shrinking" {
 
         // Verify that all shrinks are even numbers (maintain the doubling property)
         for (shrinks.values) |shrink| {
-            try std.testing.expect(shrink.value % 2 == 0);
+            try std.testing.expect(@rem(shrink.value, 2) == 0);
         }
     }
 }

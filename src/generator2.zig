@@ -115,29 +115,28 @@ pub fn Generator(comptime T: type) type {
         /// The map function provides a mechanism that allows us to apply a transform to a generated datum. And in the case where we need to shrink that datum (upon a predicate failure), it also provides a mechanism to: revert the transform, shrink, and re-apply. This unmap/shrink/remap can be applied for values coming from a generator, and also for values that have been provided without a generator. This allows library consumers to run pbt with pre-defined values, instead of being prisonners of the generators.
         /// When it comes to un-map data coming from generators,it’s possible to confidently do so using the original generator’s context and the original value. For values not coming from a generator, we have to rely on a user-provided unmap function which can apply the reverse transform - though the confidence level with this approach is lower, since it’s not provided by the library.
         pub fn map(self: Self, comptime U: type, mapFn: fn (T) U, unmapFn: ?fn (U) ?T) Generator(U) {
+            const MapContext = struct {
+                original_value: T,
+                original_context: ?*anyopaque,
+                context_deinit: ?*const fn (?*anyopaque, std.mem.Allocator) void,
+
+                /// Free resources associated with this context
+                fn deinit(ctx: ?*anyopaque, allocator: std.mem.Allocator) void {
+                    if (ctx) |ptr| {
+                        const self_ctx: *@This() = @ptrCast(@alignCast(ptr));
+                        if (self_ctx.original_context != null and self_ctx.context_deinit != null) {
+                            self_ctx.context_deinit.?(self_ctx.original_context, allocator);
+                        }
+                        allocator.destroy(self_ctx);
+                    }
+                }
+            };
             return Generator(U){
                 .generateFn = struct {
                     const ParentGenerator = self;
                     const MapFunction = mapFn;
 
                     /// Context for mapped values
-                    const MapContext = struct {
-                        original_value: T,
-                        original_context: ?*anyopaque,
-                        context_deinit: ?*const fn (?*anyopaque, std.mem.Allocator) void,
-
-                        /// Free resources associated with this context
-                        fn deinit(ctx: ?*anyopaque, allocator: std.mem.Allocator) void {
-                            if (ctx) |ptr| {
-                                const self_ctx: *MapContext = @ptrCast(@alignCast(ptr));
-                                if (self_ctx.original_context != null and self_ctx.context_deinit != null) {
-                                    self_ctx.context_deinit.?(self_ctx.original_context, allocator);
-                                }
-                                allocator.destroy(self_ctx);
-                            }
-                        }
-                    };
-
                     fn generate(random: std.Random, size: usize, allocator: std.mem.Allocator) error{OutOfMemory}!Value(U) {
                         // Generate original value with context
                         const original = try ParentGenerator.generate(random, size, allocator);
@@ -165,7 +164,6 @@ pub fn Generator(comptime T: type) type {
                     const ParentGenerator = self;
                     const MapFunction = mapFn;
                     const UnmapFunction = unmapFn;
-                    const MapContext = @TypeOf(generate).MapContext;
 
                     fn shrink(value: U, context: ?*anyopaque, allocator: std.mem.Allocator) error{OutOfMemory}!ValueList(U) {
                         if (context) |ctx_ptr| {
@@ -336,7 +334,7 @@ fn intShrink(comptime T: type, value: T, context: ?*anyopaque, allocator: std.me
 
     // Strategy 1: Shrink towards 0 (divide by 2)
     if (value != 0) {
-        try shrink_candidates.append(Value(T).initNoContext(value / 2));
+        try shrink_candidates.append(Value(T).initNoContext(@divTrunc(value, 2)));
     }
 
     // Strategy 2: Try boundaries near 0

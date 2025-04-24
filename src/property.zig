@@ -37,33 +37,125 @@ pub fn Property(comptime T: type) type {
         /// The predicate function that tests each value
         predicate: fn (T) bool,
 
-        /// Setup function called before each test case (optional)
-        before_each: ?fn () void,
+        /// Setup function context and callback
+        before_each_context: ?*anyopaque = null,
+        before_each_fn: ?fn (*anyopaque) void = null,
 
-        /// Teardown function called after each test case (optional)
-        after_each: ?fn () void,
+        /// Teardown function context and callback
+        after_each_context: ?*anyopaque = null,
+        after_each_fn: ?fn (*anyopaque) void = null,
 
         /// Create a new property from a generator and predicate
         pub fn init(generator: Generator(T), predicate: fn (T) bool) Self {
             return .{
                 .generator = generator,
                 .predicate = predicate,
-                .before_each = null,
-                .after_each = null,
+                .before_each_context = null,
+                .before_each_fn = null,
+                .after_each_context = null,
+                .after_each_fn = null,
             };
         }
 
         /// Add a setup function to be called before each test case
-        pub fn beforeEach(self: Self, hook: fn () void) Self {
+        /// The context is optional - pass null for hooks that don't need context
+        pub fn beforeEach(
+            self: Self,
+            context: anytype,
+            comptime hookFn: anytype,
+        ) Self {
+            const HookType = @TypeOf(hookFn);
+            const hookInfo = @typeInfo(HookType).Fn;
+
+            // Validate hook function signature at compile time
+            comptime {
+                if (hookInfo.params.len == 0) {
+                    // No-context hook - this is fine
+                } else if (hookInfo.params.len == 1) {
+                    // Context-based hook - make sure context type matches
+                    const ContextType = @TypeOf(context);
+                    const ParamType = hookInfo.params[0].type.?;
+
+                    if (ParamType != ContextType) {
+                        @compileError("Hook parameter type doesn't match context type");
+                    }
+                } else {
+                    @compileError("Hook function must take either 0 or 1 parameters");
+                }
+            }
+
             var result = self;
-            result.before_each = hook;
+
+            if (hookInfo.params.len == 0) {
+                // No-context hook
+                result.before_each_context = null;
+                result.before_each_fn = struct {
+                    fn wrapper(_: *anyopaque) void {
+                        hookFn();
+                    }
+                }.wrapper;
+            } else {
+                // Context-based hook
+                const ContextType = @TypeOf(context);
+                result.before_each_context = context;
+                result.before_each_fn = struct {
+                    fn wrapper(ctx: *anyopaque) void {
+                        hookFn(@as(*ContextType, @ptrCast(@alignCast(ctx))).*);
+                    }
+                }.wrapper;
+            }
+
             return result;
         }
 
         /// Add a teardown function to be called after each test case
-        pub fn afterEach(self: Self, hook: fn () void) Self {
+        /// The context is optional - pass null for hooks that don't need context
+        pub fn afterEach(
+            self: Self,
+            context: anytype,
+            comptime hookFn: anytype,
+        ) Self {
+            const HookType = @TypeOf(hookFn);
+            const hookInfo = @typeInfo(HookType).Fn;
+
+            // Validate hook function signature at compile time
+            comptime {
+                if (hookInfo.params.len == 0) {
+                    // No-context hook - this is fine
+                } else if (hookInfo.params.len == 1) {
+                    // Context-based hook - make sure context type matches
+                    const ContextType = @TypeOf(context);
+                    const ParamType = hookInfo.params[0].type.?;
+
+                    if (ParamType != ContextType) {
+                        @compileError("Hook parameter type doesn't match context type");
+                    }
+                } else {
+                    @compileError("Hook function must take either 0 or 1 parameters");
+                }
+            }
+
             var result = self;
-            result.after_each = hook;
+
+            if (hookInfo.params.len == 0) {
+                // No-context hook
+                result.after_each_context = null;
+                result.after_each_fn = struct {
+                    fn wrapper(_: *anyopaque) void {
+                        hookFn();
+                    }
+                }.wrapper;
+            } else {
+                // Context-based hook
+                const ContextType = @TypeOf(context);
+                result.after_each_context = context;
+                result.after_each_fn = struct {
+                    fn wrapper(ctx: *anyopaque) void {
+                        hookFn(@as(*ContextType, @ptrCast(@alignCast(ctx))).*);
+                    }
+                }.wrapper;
+            }
+
             return result;
         }
 
@@ -88,16 +180,28 @@ pub fn Property(comptime T: type) type {
                 const test_value = try self.generator.generate(random, iter, allocator);
 
                 // Call the before hook if any
-                if (self.before_each) |hook| {
-                    hook();
+                if (self.before_each_fn) |hookFn| {
+                    if (self.before_each_context) |ctx| {
+                        hookFn(ctx);
+                    } else {
+                        // For context-less hooks, we pass a dummy value
+                        var dummy: u8 = 0;
+                        hookFn(&dummy);
+                    }
                 }
 
                 // Run the predicate on the generated value
                 const predicate_result = self.predicate(test_value.value);
 
                 // Call the after hook if any
-                if (self.after_each) |hook| {
-                    hook();
+                if (self.after_each_fn) |hookFn| {
+                    if (self.after_each_context) |ctx| {
+                        hookFn(ctx);
+                    } else {
+                        // For context-less hooks, we pass a dummy value
+                        var dummy: u8 = 0;
+                        hookFn(&dummy);
+                    }
                 }
 
                 if (!predicate_result) {
@@ -120,15 +224,27 @@ pub fn Property(comptime T: type) type {
                         // Find the first shrink that still fails the test
                         for (shrinks.values) |shrink| {
                             // Run the before hook if any
-                            if (self.before_each) |hook| {
-                                hook();
+                            if (self.before_each_fn) |hookFn| {
+                                if (self.before_each_context) |ctx| {
+                                    hookFn(ctx);
+                                } else {
+                                    // For context-less hooks, we pass a dummy value
+                                    var dummy: u8 = 0;
+                                    hookFn(&dummy);
+                                }
                             }
 
                             const shrink_result = self.predicate(shrink.value);
 
                             // Run the after hook if any
-                            if (self.after_each) |hook| {
-                                hook();
+                            if (self.after_each_fn) |hookFn| {
+                                if (self.after_each_context) |ctx| {
+                                    hookFn(ctx);
+                                } else {
+                                    // For context-less hooks, we pass a dummy value
+                                    var dummy: u8 = 0;
+                                    hookFn(&dummy);
+                                }
                             }
 
                             if (!shrink_result) {
