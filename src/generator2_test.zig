@@ -197,7 +197,7 @@ test "failing property with shrinking (all integers are positive)" {
 
     // The counterexample should be 0 or negative
     if (result.counterexample) |counter_ptr| {
-        const counterexample = @as(*const i32, @ptrCast(counter_ptr)).*;
+        const counterexample = @as(*const i32, @ptrCast(@alignCast(counter_ptr))).*;
         try std.testing.expect(counterexample <= 0);
     } else {
         try std.testing.expect(false); // Should have a counterexample
@@ -290,7 +290,7 @@ test "property test finds minimal failing example" {
 
     // The counterexample should be the minimal failing example: 9 or less
     if (result.counterexample) |counter_ptr| {
-        const counterexample = @as(*const i32, @ptrCast(counter_ptr)).*;
+        const counterexample = @as(*const i32, @ptrCast(@alignCast(counter_ptr))).*;
         try std.testing.expect(counterexample < 10);
 
         // In the ideal case, shrinking should find exactly 0

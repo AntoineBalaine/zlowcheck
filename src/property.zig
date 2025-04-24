@@ -65,7 +65,7 @@ pub fn Property(comptime T: type) type {
             comptime hookFn: anytype,
         ) Self {
             const HookType = @TypeOf(hookFn);
-            const hookInfo = @typeInfo(HookType).Fn;
+            const hookInfo = @typeInfo(HookType).@"fn";
 
             // Validate hook function signature at compile time
             comptime {
@@ -116,7 +116,7 @@ pub fn Property(comptime T: type) type {
             comptime hookFn: anytype,
         ) Self {
             const HookType = @TypeOf(hookFn);
-            const hookInfo = @typeInfo(HookType).Fn;
+            const hookInfo = @typeInfo(HookType).@"fn";
 
             // Validate hook function signature at compile time
             comptime {
