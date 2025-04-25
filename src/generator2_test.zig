@@ -815,9 +815,9 @@ test "vector generator produces vectors within range" {
 
 test "tuple generator combines multiple generators" {
     // Create generators for different types
-    const intGenerator = gen(i32, .{ .min = 1, .max = 100 });
-    const boolGenerator = gen(bool, .{});
-    const floatGenerator = gen(f64, .{ .min = -10.0, .max = 10.0 });
+    const intGenerator = comptime gen(i32, .{ .min = 1, .max = 100 });
+    const boolGenerator = comptime gen(bool, .{});
+    const floatGenerator = comptime gen(f64, .{ .min = -10.0, .max = 10.0 });
 
     // Combine them into a tuple generator
     const tupleGenerator = tuple(.{ intGenerator, boolGenerator, floatGenerator });
@@ -847,9 +847,9 @@ test "tuple generator combines multiple generators" {
 
 test "oneOf selects from multiple generators" {
     // Create several integer generators with different ranges
-    const smallIntGen = gen(i32, .{ .min = 1, .max = 10 });
-    const mediumIntGen = gen(i32, .{ .min = 11, .max = 100 });
-    const largeIntGen = gen(i32, .{ .min = 101, .max = 1000 });
+    const smallIntGen = comptime gen(i32, .{ .min = 1, .max = 10 });
+    const mediumIntGen = comptime gen(i32, .{ .min = 11, .max = 100 });
+    const largeIntGen = comptime gen(i32, .{ .min = 101, .max = 1000 });
 
     // Combine them with oneOf
     const combinedGen = oneOf(.{ smallIntGen, mediumIntGen, largeIntGen }, null);
@@ -882,13 +882,13 @@ test "oneOf selects from multiple generators" {
 
 test "oneOf respects weights" {
     // Create two boolean generators - one that always generates true, one that always generates false
-    const trueGen = gen(bool, .{}).map(bool, struct {
+    const trueGen = comptime gen(bool, .{}).map(bool, struct {
         fn alwaysTrue(_: bool) bool {
             return true;
         }
     }.alwaysTrue, null);
 
-    const falseGen = gen(bool, .{}).map(bool, struct {
+    const falseGen = comptime gen(bool, .{}).map(bool, struct {
         fn alwaysFalse(_: bool) bool {
             return false;
         }

@@ -46,7 +46,7 @@ pub fn Value(comptime T: type) type {
 }
 
 /// Combine multiple generators with a tuple
-pub fn tuple(generators: anytype) blk: {
+pub fn tuple(comptime generators: anytype) blk: {
     const fields = std.meta.fields(@TypeOf(generators));
     var types: [fields.len]type = undefined;
     for (fields, 0..) |field, i| {
@@ -231,7 +231,7 @@ pub fn tuple(generators: anytype) blk: {
 }
 
 /// Choose between multiple generators
-pub fn oneOf(generators: anytype, weights: ?[]const f32) blk: {
+pub fn oneOf(comptime generators: anytype, comptime weights: ?[]const f32) blk: {
     // Get the type from the first generator
     const T = @TypeOf(generators[0]).ValueType;
 
@@ -819,7 +819,7 @@ fn intGen(comptime T: type, config: anytype) Generator(T) {
 }
 
 /// Generate slices
-fn sliceGen(comptime E: type, child_gen: Generator(E), config: anytype) Generator([]E) {
+fn sliceGen(comptime E: type, comptime child_gen: Generator(E), config: anytype) Generator([]E) {
     const min_len = if (@hasField(@TypeOf(config), "min_len")) config.min_len else 0;
     const max_len = if (@hasField(@TypeOf(config), "max_len")) config.max_len else 100;
 
@@ -1066,7 +1066,7 @@ fn sliceGen(comptime E: type, child_gen: Generator(E), config: anytype) Generato
 }
 
 /// Generate single pointers
-fn pointerGen(comptime Child: type, child_gen: Generator(Child)) Generator(*Child) {
+fn pointerGen(comptime Child: type, comptime child_gen: Generator(Child)) Generator(*Child) {
     return Generator(*Child){
         .generateFn = struct {
             const ChildGen = child_gen;
@@ -1898,7 +1898,7 @@ fn unionGen(comptime T: type, info: std.builtin.Type.Union, config: anytype) Gen
 }
 
 /// Generate optional values
-fn optionalGen(comptime Child: type, child_gen: Generator(Child), config: anytype) Generator(?Child) {
+fn optionalGen(comptime Child: type, comptime child_gen: Generator(Child), config: anytype) Generator(?Child) {
     // Default null probability if not specified
     const null_prob: f32 = if (@hasField(@TypeOf(config), "null_probability"))
         config.null_probability
@@ -2091,7 +2091,7 @@ fn optionalGen(comptime Child: type, child_gen: Generator(Child), config: anytyp
 }
 
 /// Generate vectors
-fn vectorGen(comptime E: type, comptime len: usize, child_gen: Generator(E)) Generator(@Vector(len, E)) {
+fn vectorGen(comptime E: type, comptime len: usize, comptime child_gen: Generator(E)) Generator(@Vector(len, E)) {
     return Generator(@Vector(len, E)){
         .generateFn = struct {
             const ChildGen = child_gen;
