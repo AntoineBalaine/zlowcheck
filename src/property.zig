@@ -100,7 +100,7 @@ pub fn Property(comptime T: type) type {
                 result.before_each_context = context;
                 result.before_each_fn = struct {
                     fn wrapper(ctx: *anyopaque) void {
-                        hookFn(@as(*ContextType, @ptrCast(@alignCast(ctx))).*);
+                        hookFn(@as(ContextType, @ptrCast(@alignCast(ctx))));
                     }
                 }.wrapper;
             }
@@ -151,7 +151,7 @@ pub fn Property(comptime T: type) type {
                 result.after_each_context = context;
                 result.after_each_fn = struct {
                     fn wrapper(ctx: *anyopaque) void {
-                        hookFn(@as(*ContextType, @ptrCast(@alignCast(ctx))).*);
+                        hookFn(@as(ContextType, @ptrCast(@alignCast(ctx))));
                     }
                 }.wrapper;
             }

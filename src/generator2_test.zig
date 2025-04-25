@@ -85,12 +85,14 @@ test "map with shrinking" {
     // Create a generator for integers between 1 and 100
     const intGenerator = gen(i32, .{ .min = 1, .max = 100 });
 
-    // Map to double the values
-    const doubledGenerator = intGenerator.map(i32, struct {
+    // Define the mapping functions
+    const double = @as(*const fn (i32) i32, &struct {
         fn double(n: i32) i32 {
             return n * 2;
         }
-    }.double, struct {
+    }.double);
+    
+    const halve = @as(?*const fn (i32) ?i32, &struct {
         fn halve(n: i32) ?i32 {
             if (@rem(n, 2) == 0) {
                 return @divTrunc(n, 2);
@@ -98,6 +100,9 @@ test "map with shrinking" {
             return null; // Can't unmapped odd numbers
         }
     }.halve);
+
+    // Map to double the values
+    const doubledGenerator = intGenerator.map(i32, double, halve);
 
     var prng = std.Random.DefaultPrng.init(42);
     const random = prng.random();
@@ -129,12 +134,15 @@ test "filter with shrinking" {
     // Create a generator for integers between -100 and 100
     const intGenerator = gen(i32, .{ .min = -100, .max = 100 });
 
-    // Filter to only positive values
-    const positiveGenerator = intGenerator.filter(struct {
+    // Define the filter function
+    const isPositive = @as(*const fn (i32) bool, &struct {
         fn isPositive(n: i32) bool {
             return n > 0;
         }
     }.isPositive);
+
+    // Filter to only positive values
+    const positiveGenerator = intGenerator.filter(isPositive);
 
     var prng = std.Random.DefaultPrng.init(42);
     const random = prng.random();

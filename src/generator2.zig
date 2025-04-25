@@ -122,9 +122,9 @@ pub fn Generator(comptime T: type) type {
         /// Map a generator to a new type
         /// The map function provides a mechanism that allows us to apply a transform to a generated datum. And in the case where we need to shrink that datum (upon a predicate failure), it also provides a mechanism to: revert the transform, shrink, and re-apply. This unmap/shrink/remap can be applied for values coming from a generator, and also for values that have been provided without a generator. This allows library consumers to run pbt with pre-defined values, instead of being prisonners of the generators.
         /// When it comes to un-map data coming from generators,it’s possible to confidently do so using the original generator’s context and the original value. For values not coming from a generator, we have to rely on a user-provided unmap function which can apply the reverse transform - though the confidence level with this approach is lower, since it’s not provided by the library.
-        pub fn map(self: Self, comptime U: type, mapFn: *const fn (T) U, unmapFn: ?*const fn (U) ?T) MappedGenerator(T, U) {
+        pub fn map(self: *const Self, comptime U: type, mapFn: *const fn (T) U, unmapFn: ?*const fn (U) ?T) MappedGenerator(T, U) {
             return MappedGenerator(T, U){
-                .parent = &self,
+                .parent = self,
                 .map_fn = mapFn,
                 .unmap_fn = unmapFn,
             };
@@ -133,9 +133,9 @@ pub fn Generator(comptime T: type) type {
         /// Filter generated values
         ///
         /// Similarly to the map function, the filter function applies a filter to a generator’s output list. For sanity’s sake, the filter is only allowed to run 100 unsuccessful tries. Any value that is filtered out is de-initialized. When it comes to shrinking, Filter’s shrink() will call the original generator’s shrink method and reapply the filtering.
-        pub fn filter(self: Self, filterFn: *const fn (T) bool) FilteredGenerator(T) {
+        pub fn filter(self: *const Self, filterFn: *const fn (T) bool) FilteredGenerator(T) {
             return FilteredGenerator(T){
-                .parent = &self,
+                .parent = self,
                 .filter_fn = filterFn,
             };
         }
