@@ -3,22 +3,22 @@ const math = std.math;
 const mem = std.mem;
 const assert = std.debug.assert;
 const maxInt = std.math.maxInt;
+const BitReader = @import("bitreader_std.zig");
 
 const FinitePrng = @This();
 bytes_: []const u8,
 fixed_buffer: std.io.FixedBufferStream([]const u8),
-bit_reader: std.io.BitReader(.big, std.io.FixedBufferStream([]const u8).Reader),
+bit_reader: BitReader.BitReader(.big),
 
 pub const FinitePrngErr = error{
     OutOfEntropy,
 };
 
 pub fn init(bytes_: []const u8) FinitePrng {
-    var fixed_buffer = std.io.fixedBufferStream(bytes_);
     return .{
         .bytes_ = bytes_,
-        .fixed_buffer = fixed_buffer,
-        .bit_reader = std.io.bitReader(.little, fixed_buffer.reader()),
+        .fixed_buffer = std.io.fixedBufferStream(bytes_),
+        .bit_reader = BitReader.bitReader(.big),
     };
 }
 
@@ -35,29 +35,36 @@ pub fn bytes(self: *@This(), buf: []u8) !void {
 
 pub fn boolean(self: *@This()) !bool {
     var bits_read: u16 = undefined;
-    const result = try self.bit_reader.readBits(u1, 1, &bits_read);
+    const result = try self.bit_reader.readBits(u1, 1, &bits_read, self.fixed_buffer.reader());
     if (bits_read == 0) return error.OutOfEntropy;
     return result == 1;
 }
+
 pub fn enumValue(self: *@This(), comptime EnumType: type) !EnumType {
-    const fields = std.meta.fields(EnumType);
-    const random_index = try self.uintLessThan(usize, fields.len);
-    return @field(EnumType, fields[random_index].name);
+    // Get all enum values at comptime
+    const values = comptime std.enums.values(EnumType);
+    // Get a random index at runtime
+    const random_index = try self.uintLessThan(usize, values.len);
+    // Return the enum value at that index
+    return values[random_index];
 }
 pub fn enumValueWithIndex(self: *@This(), comptime EnumType: type, comptime Index: type) !EnumType {
-    const fields = std.meta.fields(EnumType);
-    const random_index = try self.uintLessThan(Index, fields.len);
-    return @field(EnumType, fields[random_index].name);
+    // Get all enum values at comptime
+    const values = comptime std.enums.values(EnumType);
+    // Get a random index at runtime with the specified index type
+    const random_index = try self.uintLessThan(Index, values.len);
+    // Return the enum value at that index
+    return values[@intCast(random_index)];
 }
 pub fn int(self: *@This(), comptime T: type) !T {
-    const bits = @typeInfo(T).Int.bits;
+    const bits = @typeInfo(T).int.bits;
     const UnsignedT = std.meta.Int(.unsigned, bits);
 
     var bits_read: u16 = undefined;
-    const result = try self.bit_reader.readBits(UnsignedT, bits, &bits_read);
+    const result = try self.bit_reader.readBits(UnsignedT, bits, &bits_read, self.fixed_buffer.reader());
     if (bits_read < bits) return error.OutOfEntropy;
 
-    if (@typeInfo(T).Int.signedness == .signed) {
+    if (@typeInfo(T).int.signedness == .signed) {
         return @bitCast(result);
     } else {
         return result;
@@ -74,13 +81,14 @@ pub fn uintLessThan(self: *@This(), comptime T: type, less_than: T) !T {
     if (less_than <= 1) return 0;
 
     // Calculate number of bits needed to represent less_than-1
+    // Ensure we're using an unsigned type for log2_int_ceil
     const bits_needed = std.math.log2_int_ceil(T, less_than);
     const mask = (@as(T, 1) << @intCast(bits_needed)) - 1;
 
     // Keep generating random numbers until we get one less than less_than
     while (true) {
         var bits_read: u16 = undefined;
-        const result = try self.bit_reader.readBits(T, @intCast(bits_needed), &bits_read);
+        const result = try self.bit_reader.readBits(T, @intCast(bits_needed), &bits_read, self.fixed_buffer.reader());
         if (bits_read < bits_needed) return error.OutOfEntropy;
 
         const masked_result = result & mask;
@@ -102,8 +110,16 @@ pub fn intRangeLessThanBiased(self: *@This(), comptime T: type, at_least: T, les
 pub fn intRangeLessThan(self: *@This(), comptime T: type, at_least: T, less_than: T) !T {
     if (at_least >= less_than) return at_least;
     const range = less_than - at_least;
-    const result = try self.uintLessThan(T, range);
-    return at_least + result;
+
+    // Use unsigned version for the range calculation if T is signed
+    if (@typeInfo(T).int.signedness == .signed) {
+        const UT = std.meta.Int(.unsigned, @typeInfo(T).int.bits);
+        const unsigned_result = try self.uintLessThan(UT, @intCast(range));
+        return at_least + @as(T, @intCast(unsigned_result));
+    } else {
+        const result = try self.uintLessThan(T, range);
+        return at_least + result;
+    }
 }
 pub fn intRangeAtMostBiased(self: *@This(), comptime T: type, at_least: T, at_most: T) !T {
     return try self.intRangeLessThanBiased(T, at_least, at_most + 1);
@@ -133,7 +149,6 @@ pub fn floatNorm(self: *@This(), comptime T: type) !T {
     switch (T) {
         f32 => {
             const random = try self.int(u32);
-            // ai? what’s a mantissa?
             // Use the first 23 bits for the mantissa, discard the rest
             const result = @as(f32, @floatFromInt(random & 0x7FFFFF)) / @as(f32, @floatFromInt(0x800000));
             return result;
