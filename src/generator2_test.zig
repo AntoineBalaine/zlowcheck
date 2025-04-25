@@ -538,7 +538,9 @@ test "slice shrinking works correctly" {
         if (!is_valid_shrink) {
             // Check if elements are simpler
             for (shrink.value, slice.value) |shrink_elem, orig_elem| {
-                if (@abs(shrink_elem) < @abs(orig_elem)) {
+                if (@abs(shrink_elem) < @abs(orig_elem) or
+                    (@abs(shrink_elem) == @abs(orig_elem) and shrink_elem >= 0 and orig_elem < 0))
+                {
                     is_valid_shrink = true;
                     break;
                 }
