@@ -307,3 +307,157 @@ test "property test finds minimal failing example" {
         try std.testing.expect(false); // Should have a counterexample
     }
 }
+
+test "float generator produces values within range" {
+    // Create a generator for floats between -10.0 and 10.0
+    const floatGenerator = gen(f64, .{ .min = -10.0, .max = 10.0 });
+
+    var prng = std.Random.DefaultPrng.init(42);
+    const random = prng.random();
+
+    // Generate 100 values and check they're all within range
+    for (0..100) |_| {
+        const value = try floatGenerator.generate(random, 10, std.testing.allocator);
+        defer value.deinit(std.testing.allocator);
+
+        // Skip NaN and infinity checks
+        if (std.math.isNan(value.value) or std.math.isInf(value.value)) continue;
+
+        try std.testing.expect(value.value >= -10.0 and value.value <= 10.0);
+    }
+}
+
+test "float generator produces special values" {
+    const floatGenerator = gen(f64, .{});
+
+    var prng = std.Random.DefaultPrng.init(42);
+    const random = prng.random();
+
+    // Track special values we've seen
+    var seen_zero = false;
+    var seen_one = false;
+    var seen_neg_one = false;
+    var seen_min_pos = false;
+    var seen_min_neg = false;
+
+    // Generate many values to increase chance of hitting special values
+    for (0..1000) |_| {
+        const value = try floatGenerator.generate(random, 10, std.testing.allocator);
+        defer value.deinit(std.testing.allocator);
+
+        if (value.value == 0.0) seen_zero = true;
+        if (value.value == 1.0) seen_one = true;
+        if (value.value == -1.0) seen_neg_one = true;
+        if (value.value == std.math.floatMin(f64)) seen_min_pos = true;
+        if (value.value == -std.math.floatMin(f64)) seen_min_neg = true;
+
+        // If we've seen all special values, we can stop
+        if (seen_zero and seen_one and seen_neg_one and
+            seen_min_pos and seen_min_neg) break;
+    }
+
+    // We should have found at least some special values
+    var found_count: usize = 0;
+    if (seen_zero) found_count += 1;
+    if (seen_one) found_count += 1;
+    if (seen_neg_one) found_count += 1;
+    if (seen_min_pos) found_count += 1;
+    if (seen_min_neg) found_count += 1;
+
+    try std.testing.expect(found_count > 0);
+    std.debug.print("Found {d} of 5 special float values\n", .{found_count});
+}
+
+test "float shrinking produces simpler values" {
+    // Create a generator for floats
+    const floatGenerator = gen(f64, .{ .min = -100.0, .max = 100.0 });
+
+    var prng = std.Random.DefaultPrng.init(42);
+    const random = prng.random();
+
+    // Generate a value then shrink it
+    const value = try floatGenerator.generate(random, 10, std.testing.allocator);
+    defer value.deinit(std.testing.allocator);
+
+    // Only test shrinking for non-zero, non-special values
+    if (value.value != 0.0 and !std.math.isNan(value.value) and !std.math.isInf(value.value)) {
+        const shrinks = try floatGenerator.shrink(value.value, value.context, std.testing.allocator);
+        defer shrinks.deinit();
+
+        // Verify we have some shrink candidates
+        try std.testing.expect(shrinks.len() > 0);
+
+        // Verify that at least one shrink candidate is "simpler" than our value
+        var found_simpler = false;
+        for (shrinks.values) |shrink| {
+            // Absolute value should be smaller or it should be closer to zero
+            if (@abs(shrink.value) < @abs(value.value) or
+                @abs(shrink.value - 0) < @abs(value.value - 0))
+            {
+                found_simpler = true;
+                break;
+            }
+        }
+
+        try std.testing.expect(found_simpler);
+    }
+}
+
+test "bool generator produces both true and false" {
+    const boolGenerator = gen(bool, .{});
+
+    var prng = std.Random.DefaultPrng.init(42);
+    const random = prng.random();
+
+    var seen_true = false;
+    var seen_false = false;
+
+    // Generate values until we've seen both true and false
+    for (0..100) |_| {
+        const value = try boolGenerator.generate(random, 10, std.testing.allocator);
+        defer value.deinit(std.testing.allocator);
+
+        if (value.value) seen_true = true else seen_false = true;
+
+        if (seen_true and seen_false) break;
+    }
+
+    // We should have seen both true and false
+    try std.testing.expect(seen_true and seen_false);
+}
+
+test "bool shrinking works correctly" {
+    const boolGenerator = gen(bool, .{});
+
+    var prng = std.Random.DefaultPrng.init(42);
+    const random = prng.random();
+
+    // Generate a true value (we know shrinking only works on true)
+    var value: Value(bool) = undefined;
+    var found_true = false;
+
+    // Try to get a true value
+    for (0..100) |_| {
+        value = try boolGenerator.generate(random, 10, std.testing.allocator);
+        if (value.value) {
+            found_true = true;
+            break;
+        }
+        value.deinit(std.testing.allocator);
+    }
+
+    if (found_true) {
+        defer value.deinit(std.testing.allocator);
+
+        // Shrink the true value
+        const shrinks = try boolGenerator.shrink(value.value, value.context, std.testing.allocator);
+        defer shrinks.deinit();
+
+        // Should have exactly one shrink candidate: false
+        try std.testing.expectEqual(@as(usize, 1), shrinks.len());
+        try std.testing.expectEqual(false, shrinks.values[0].value);
+    } else {
+        // If we couldn't generate a true value after 100 tries, something is wrong
+        try std.testing.expect(false);
+    }
+}

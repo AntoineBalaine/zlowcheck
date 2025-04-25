@@ -45,6 +45,362 @@ pub fn Value(comptime T: type) type {
     };
 }
 
+/// Combine multiple generators with a tuple
+pub fn tuple(comptime generators: anytype) blk: {
+    const fields = std.meta.fields(@TypeOf(generators));
+    var types: [fields.len]type = undefined;
+    for (fields, 0..) |field, i| {
+        const GenType = @TypeOf(@field(generators, field.name));
+        types[i] = GenType.ValueType;
+    }
+    break :blk Generator(std.meta.Tuple(&types));
+} {
+    // Define the tuple type once
+    const TupleType = comptime blk: {
+        const fields = std.meta.fields(@TypeOf(generators));
+        var types: [fields.len]type = undefined;
+        for (fields, 0..) |field, i| {
+            const GenType = @TypeOf(@field(generators, field.name));
+            types[i] = GenType.ValueType;
+        }
+        break :blk std.meta.Tuple(&types);
+    };
+
+    return Generator(TupleType){
+        .generateFn = struct {
+            const Generators = generators;
+
+            fn generate(random: std.Random, size: usize, allocator: std.mem.Allocator) error{OutOfMemory}!Value(TupleType) {
+                // Create a tuple context
+                const TupleContext = struct {
+                    // Dynamic array to hold element contexts
+                    element_contexts: std.ArrayList(?*anyopaque),
+                    element_deinits: std.ArrayList(?*const fn (?*anyopaque, std.mem.Allocator) void),
+
+                    fn deinit(ctx: ?*anyopaque, alloc: std.mem.Allocator) void {
+                        if (ctx) |ptr| {
+                            const self_ctx = @as(*@This(), @ptrCast(@alignCast(ptr)));
+
+                            // Call deinit on each element context
+                            for (self_ctx.element_contexts.items, self_ctx.element_deinits.items) |elem_ctx, deinit_fn| {
+                                if (deinit_fn) |deinit_fn_| {
+                                    deinit_fn_(elem_ctx, alloc);
+                                }
+                            }
+
+                            // Free the arrays
+                            self_ctx.element_contexts.deinit();
+                            self_ctx.element_deinits.deinit();
+
+                            // Free the context itself
+                            alloc.destroy(self_ctx);
+                        }
+                    }
+                };
+
+                // Create the context
+                var context = try allocator.create(TupleContext);
+                context.* = .{
+                    .element_contexts = std.ArrayList(?*anyopaque).init(allocator),
+                    .element_deinits = std.ArrayList(?*const fn (?*anyopaque, std.mem.Allocator) void).init(allocator),
+                };
+
+                // Generate each element
+                var result: TupleType = undefined;
+
+                inline for (std.meta.fields(@TypeOf(Generators)), 0..) |field, i| {
+                    const genrt = @field(Generators, field.name);
+                    const element_value = try genrt.generate(random, size, allocator);
+                    result[i] = element_value.value;
+
+                    // Store the context if any
+                    if (element_value.context != null) {
+                        try context.element_contexts.append(element_value.context.?);
+                        try context.element_deinits.append(element_value.context_deinit.?);
+                    } else {
+                        try context.element_contexts.append(null);
+                        try context.element_deinits.append(null);
+                    }
+                }
+
+                return Value(TupleType).init(
+                    result,
+                    @as(*anyopaque, @ptrCast(context)),
+                    TupleContext.deinit,
+                );
+            }
+        }.generate,
+
+        .shrinkFn = struct {
+            const Generators = generators;
+            fn shrink(value: TupleType, context: ?*anyopaque, allocator: std.mem.Allocator) error{OutOfMemory}!ValueList(TupleType) {
+                if (context == null) {
+                    // Can't shrink without context
+                    return ValueList(TupleType).init(&[_]Value(TupleType){}, allocator);
+                }
+
+                const tuple_ctx = @as(*struct {
+                    element_contexts: std.ArrayList(?*anyopaque),
+                    element_deinits: std.ArrayList(?*const fn (?*anyopaque, std.mem.Allocator) void),
+                }, @ptrCast(@alignCast(context)));
+
+                // For tuples, we shrink one element at a time
+                var all_shrinks = std.ArrayList(Value(TupleType)).init(allocator);
+                defer all_shrinks.deinit();
+
+                // Try shrinking each element
+                inline for (std.meta.fields(@TypeOf(Generators)), 0..) |field, i| {
+                    const genrt = @field(Generators, field.name);
+                    const elem_ctx = tuple_ctx.element_contexts.items[i];
+                    const elem_shrinks = try genrt.shrink(value[i], elem_ctx, allocator);
+                    defer elem_shrinks.deinit();
+
+                    // For each shrunk element, create a new tuple with just that element shrunk
+                    for (elem_shrinks.values) |shrunk_elem| {
+                        // Create a new tuple context
+                        const new_ctx = try allocator.create(struct {
+                            element_contexts: std.ArrayList(?*anyopaque),
+                            element_deinits: std.ArrayList(?*const fn (?*anyopaque, std.mem.Allocator) void),
+                        });
+                        new_ctx.* = .{
+                            .element_contexts = std.ArrayList(?*anyopaque).init(allocator),
+                            .element_deinits = std.ArrayList(?*const fn (?*anyopaque, std.mem.Allocator) void).init(allocator),
+                        };
+
+                        // Copy the original contexts except for the one we're shrinking
+                        for (tuple_ctx.element_contexts.items, tuple_ctx.element_deinits.items, 0..) |ctx, deinit_fn, j| {
+                            if (j == i) {
+                                // Use the shrunk element's context
+                                try new_ctx.element_contexts.append(shrunk_elem.context);
+                                try new_ctx.element_deinits.append(shrunk_elem.context_deinit);
+                            } else {
+                                // Copy the original context
+                                try new_ctx.element_contexts.append(ctx);
+                                try new_ctx.element_deinits.append(deinit_fn);
+                            }
+                        }
+
+                        // Create a new tuple with the shrunk element
+                        var new_tuple = value;
+                        new_tuple[i] = shrunk_elem.value;
+
+                        // Add to our list of shrinks
+                        try all_shrinks.append(Value(TupleType).init(
+                            new_tuple,
+                            @as(*anyopaque, @ptrCast(new_ctx)),
+                            struct {
+                                fn deinit(ctx: ?*anyopaque, alloc: std.mem.Allocator) void {
+                                    if (ctx) |ptr| {
+                                        const self_ctx = @as(*struct {
+                                            element_contexts: std.ArrayList(?*anyopaque),
+                                            element_deinits: std.ArrayList(?*const fn (?*anyopaque, std.mem.Allocator) void),
+                                        }, @ptrCast(@alignCast(ptr)));
+
+                                        // Call deinit on each element context
+                                        for (self_ctx.element_contexts.items, self_ctx.element_deinits.items) |ctx_elem, deinit_fn| {
+                                            if (deinit_fn) |deinit_fn_| {
+                                                deinit_fn_(ctx_elem, alloc);
+                                            }
+                                        }
+
+                                        // Free the arrays
+                                        self_ctx.element_contexts.deinit();
+                                        self_ctx.element_deinits.deinit();
+
+                                        // Free the context itself
+                                        alloc.destroy(self_ctx);
+                                    }
+                                }
+                            }.deinit,
+                        ));
+                    }
+                }
+
+                return ValueList(TupleType).init(try all_shrinks.toOwnedSlice(), allocator);
+            }
+        }.shrink,
+
+        .canShrinkWithoutContextFn = struct {
+            fn canShrinkWithoutContext(value: TupleType) bool {
+                // Tuples need context for proper shrinking
+                _ = value;
+                return false;
+            }
+        }.canShrinkWithoutContext,
+    };
+}
+
+/// Choose between multiple generators
+pub fn oneOf(comptime generators: anytype, weights: ?[]const f32) blk: {
+    // Get the type from the first generator
+    const T = @TypeOf(generators[0]).ValueType;
+
+    // Verify that all generators have the same output type
+    for (generators) |genr| {
+        if (@TypeOf(genr).ValueType != T) {
+            @compileError("All generators must have the same output type");
+        }
+    }
+
+    break :blk Generator(T);
+} {
+    // Get the type from the first generator
+    const T = @TypeOf(generators[0]).ValueType;
+
+    return Generator(T){
+        .generateFn = struct {
+            const Generators = generators;
+            const Weights = weights;
+
+            fn weightedChoice(rand: std.Random, weights_slice: []const f32) usize {
+                var total: f32 = 0;
+                for (weights_slice) |w| total += w;
+
+                const r = rand.float(f32) * total;
+                var cumulative: f32 = 0;
+
+                for (weights_slice, 0..) |w, i| {
+                    cumulative += w;
+                    if (r < cumulative) return i;
+                }
+
+                return weights_slice.len - 1;
+            }
+
+            fn generate(random: std.Random, size: usize, allocator: std.mem.Allocator) error{OutOfMemory}!Value(T) {
+                const idx = if (Weights) |w|
+                    weightedChoice(random, w)
+                else
+                    random.uintLessThan(usize, Generators.len);
+
+                // Use inline for to handle each generator at compile time
+                inline for (Generators, 0..) |genr, i| {
+                    if (i == idx) {
+                        // Create a oneOf context
+                        const OneOfContext = struct {
+                            generator_index: usize,
+                            value_context: ?*anyopaque,
+                            context_deinit: ?*const fn (?*anyopaque, std.mem.Allocator) void,
+
+                            fn deinit(ctx: ?*anyopaque, alloc: std.mem.Allocator) void {
+                                if (ctx) |ptr| {
+                                    const self_ctx = @as(*@This(), @ptrCast(@alignCast(ptr)));
+
+                                    // Call deinit on the value context if any
+                                    if (self_ctx.value_context != null and self_ctx.context_deinit != null) {
+                                        self_ctx.context_deinit.?(self_ctx.value_context, alloc);
+                                    }
+
+                                    // Free the context itself
+                                    alloc.destroy(self_ctx);
+                                }
+                            }
+                        };
+
+                        // Generate the value
+                        const value = try genr.generate(random, size, allocator);
+
+                        // Create the context
+                        const context = try allocator.create(OneOfContext);
+                        context.* = .{
+                            .generator_index = i,
+                            .value_context = value.context,
+                            .context_deinit = value.context_deinit,
+                        };
+
+                        return Value(T).init(
+                            value.value,
+                            @as(*anyopaque, @ptrCast(context)),
+                            OneOfContext.deinit,
+                        );
+                    }
+                }
+
+                unreachable; // Should never reach here
+            }
+        }.generate,
+
+        .shrinkFn = struct {
+            const Generators = generators;
+            fn shrink(value: T, context: ?*anyopaque, allocator: std.mem.Allocator) error{OutOfMemory}!ValueList(T) {
+                if (context == null) {
+                    // Can't shrink without context
+                    return ValueList(T).init(&[_]Value(T){}, allocator);
+                }
+
+                const oneOf_ctx = @as(*struct {
+                    generator_index: usize,
+                    value_context: ?*anyopaque,
+                    context_deinit: ?*const fn (?*anyopaque, std.mem.Allocator) void,
+                }, @ptrCast(@alignCast(context)));
+
+                // Use the original generator to shrink the value
+                inline for (Generators, 0..) |genr, i| {
+                    if (i == oneOf_ctx.generator_index) {
+                        const shrinks = try genr.shrink(value, oneOf_ctx.value_context, allocator);
+                        defer shrinks.deinit();
+
+                        // Create a new oneOf context for each shrunk value
+                        var result = try allocator.alloc(Value(T), shrinks.len());
+
+                        for (shrinks.values, 0..) |shrunk_value, j| {
+                            // Create a new context
+                            const new_ctx = try allocator.create(struct {
+                                generator_index: usize,
+                                value_context: ?*anyopaque,
+                                context_deinit: ?*const fn (?*anyopaque, std.mem.Allocator) void,
+                            });
+                            new_ctx.* = .{
+                                .generator_index = i,
+                                .value_context = shrunk_value.context,
+                                .context_deinit = shrunk_value.context_deinit,
+                            };
+
+                            // Store the result
+                            result[j] = Value(T).init(
+                                shrunk_value.value,
+                                @as(*anyopaque, @ptrCast(new_ctx)),
+                                struct {
+                                    fn deinit(ctx: ?*anyopaque, alloc: std.mem.Allocator) void {
+                                        if (ctx) |ptr| {
+                                            const self_ctx = @as(*struct {
+                                                generator_index: usize,
+                                                value_context: ?*anyopaque,
+                                                context_deinit: ?*const fn (?*anyopaque, std.mem.Allocator) void,
+                                            }, @ptrCast(@alignCast(ptr)));
+
+                                            // Call deinit on the value context if any
+                                            if (self_ctx.value_context != null and self_ctx.context_deinit != null) {
+                                                self_ctx.context_deinit.?(self_ctx.value_context, alloc);
+                                            }
+
+                                            // Free the context itself
+                                            alloc.destroy(self_ctx);
+                                        }
+                                    }
+                                }.deinit,
+                            );
+                        }
+
+                        return ValueList(T).init(result, allocator);
+                    }
+                }
+
+                // If we get here, something went wrong
+                return ValueList(T).init(&[_]Value(T){}, allocator);
+            }
+        }.shrink,
+
+        .canShrinkWithoutContextFn = struct {
+            fn canShrinkWithoutContext(value: T) bool {
+                // oneOf needs context for proper shrinking
+                _ = value;
+                return false;
+            }
+        }.canShrinkWithoutContext,
+    };
+}
+
 /// A list of values with the same type.
 ///
 /// These get output as lists of options
@@ -142,6 +498,44 @@ pub fn Generator(comptime T: type) type {
     };
 }
 
+/// Generate booleans
+fn boolGen(config: anytype) Generator(bool) {
+    _ = config; // Unused for now, could add bias in the future
+
+    return Generator(bool){
+        .generateFn = struct {
+            fn generate(random: std.Random, size: usize, allocator: std.mem.Allocator) error{OutOfMemory}!Value(bool) {
+                _ = size;
+                _ = allocator;
+                return Value(bool).initNoContext(random.boolean());
+            }
+        }.generate,
+
+        .shrinkFn = struct {
+            fn shrink(value: bool, context: ?*anyopaque, allocator: std.mem.Allocator) error{OutOfMemory}!ValueList(bool) {
+                _ = context;
+
+                // Only true can be shrunk (to false)
+                if (value) {
+                    var result = try allocator.alloc(Value(bool), 1);
+                    result[0] = Value(bool).initNoContext(false);
+                    return ValueList(bool).init(result, allocator);
+                } else {
+                    // Can't shrink false
+                    return ValueList(bool).init(&[_]Value(bool){}, allocator);
+                }
+            }
+        }.shrink,
+
+        .canShrinkWithoutContextFn = struct {
+            fn canShrinkWithoutContext(value: bool) bool {
+                // Only true can be shrunk (to false)
+                return value;
+            }
+        }.canShrinkWithoutContext,
+    };
+}
+
 /// Implementation of integer shrinking
 fn intShrink(comptime T: type, value: T, context: ?*anyopaque, allocator: std.mem.Allocator) !ValueList(T) {
     _ = context; // Integer shrinking doesn't need context
@@ -180,6 +574,169 @@ fn intShrink(comptime T: type, value: T, context: ?*anyopaque, allocator: std.me
     }
 
     return ValueList(T).init(try shrink_candidates.toOwnedSlice(), allocator);
+}
+
+/// Generate arrays
+fn arrayGen(comptime E: type, comptime len: usize, child_gen: Generator(E)) Generator([len]E) {
+    return Generator([len]E){
+        .generateFn = struct {
+            const ChildGen = child_gen;
+            fn generate(random: std.Random, size: usize, allocator: std.mem.Allocator) error{OutOfMemory}!Value([len]E) {
+                // Create an array context to hold all element contexts
+                const ArrayContext = struct {
+                    // Dynamic array to hold element contexts
+                    element_contexts: std.ArrayList(?*anyopaque),
+                    element_deinits: std.ArrayList(?*const fn (?*anyopaque, std.mem.Allocator) void),
+
+                    fn deinit(ctx: ?*anyopaque, alloc: std.mem.Allocator) void {
+                        if (ctx) |ptr| {
+                            const self_ctx = @as(*@This(), @ptrCast(@alignCast(ptr)));
+
+                            // Call deinit on each element context
+                            for (self_ctx.element_contexts.items, self_ctx.element_deinits.items) |elem_ctx, deinit_fn| {
+                                if (deinit_fn) |deinit_fn_| {
+                                    deinit_fn_(elem_ctx, alloc);
+                                }
+                            }
+
+                            // Free the arrays
+                            self_ctx.element_contexts.deinit();
+                            self_ctx.element_deinits.deinit();
+
+                            // Free the context itself
+                            alloc.destroy(self_ctx);
+                        }
+                    }
+                };
+
+                // Create the context
+                var context = try allocator.create(ArrayContext);
+                context.* = .{
+                    .element_contexts = std.ArrayList(?*anyopaque).init(allocator),
+                    .element_deinits = std.ArrayList(?*const fn (?*anyopaque, std.mem.Allocator) void).init(allocator),
+                };
+
+                // Generate each element
+                var result: [len]E = undefined;
+                for (&result) |*elem| {
+                    const element_value = try ChildGen.generate(random, size, allocator);
+                    elem.* = element_value.value;
+
+                    // Store the context if any
+                    if (element_value.context != null) {
+                        try context.element_contexts.append(element_value.context.?);
+                        try context.element_deinits.append(element_value.context_deinit.?);
+                    } else {
+                        try context.element_contexts.append(null);
+                        try context.element_deinits.append(null);
+                    }
+                }
+
+                return Value([len]E).init(
+                    result,
+                    @as(*anyopaque, @ptrCast(context)),
+                    ArrayContext.deinit,
+                );
+            }
+        }.generate,
+
+        .shrinkFn = struct {
+            const ChildGen = child_gen;
+            fn shrink(value: [len]E, context: ?*anyopaque, allocator: std.mem.Allocator) error{OutOfMemory}!ValueList([len]E) {
+                if (context == null) {
+                    // Can't shrink without context
+                    return ValueList([len]E).init(&[_]Value([len]E){}, allocator);
+                }
+
+                const array_ctx = @as(*struct {
+                    element_contexts: std.ArrayList(?*anyopaque),
+                    element_deinits: std.ArrayList(?*const fn (?*anyopaque, std.mem.Allocator) void),
+                }, @ptrCast(@alignCast(context)));
+
+                // For arrays, we shrink one element at a time
+                var all_shrinks = std.ArrayList(Value([len]E)).init(allocator);
+                defer all_shrinks.deinit();
+
+                // Try shrinking each element
+                for (value, 0..) |elem, i| {
+                    const elem_ctx = array_ctx.element_contexts.items[i];
+                    const elem_shrinks = try ChildGen.shrink(elem, elem_ctx, allocator);
+                    defer elem_shrinks.deinit();
+
+                    // For each shrunk element, create a new array with just that element shrunk
+                    for (elem_shrinks.values) |shrunk_elem| {
+                        // Create a new array context
+                        const new_ctx = try allocator.create(struct {
+                            element_contexts: std.ArrayList(?*anyopaque),
+                            element_deinits: std.ArrayList(?*const fn (?*anyopaque, std.mem.Allocator) void),
+                        });
+                        new_ctx.* = .{
+                            .element_contexts = std.ArrayList(?*anyopaque).init(allocator),
+                            .element_deinits = std.ArrayList(?*const fn (?*anyopaque, std.mem.Allocator) void).init(allocator),
+                        };
+
+                        // Copy the original contexts except for the one we're shrinking
+                        for (array_ctx.element_contexts.items, array_ctx.element_deinits.items, 0..) |ctx, deinit_fn, j| {
+                            if (j == i) {
+                                // Use the shrunk element's context
+                                try new_ctx.element_contexts.append(shrunk_elem.context);
+                                try new_ctx.element_deinits.append(shrunk_elem.context_deinit);
+                            } else {
+                                // Copy the original context
+                                try new_ctx.element_contexts.append(ctx);
+                                try new_ctx.element_deinits.append(deinit_fn);
+                            }
+                        }
+
+                        // Create a new array with the shrunk element
+                        var new_array = value;
+                        new_array[i] = shrunk_elem.value;
+
+                        // Add to our list of shrinks
+                        try all_shrinks.append(Value([len]E).init(
+                            new_array,
+                            @as(*anyopaque, @ptrCast(new_ctx)),
+                            struct {
+                                fn deinit(ctx: ?*anyopaque, alloc: std.mem.Allocator) void {
+                                    if (ctx) |ptr| {
+                                        const self_ctx = @as(*struct {
+                                            element_contexts: std.ArrayList(?*anyopaque),
+                                            element_deinits: std.ArrayList(?*const fn (?*anyopaque, std.mem.Allocator) void),
+                                        }, @ptrCast(@alignCast(ptr)));
+
+                                        // Call deinit on each element context
+                                        for (self_ctx.element_contexts.items, self_ctx.element_deinits.items) |ctx_elem, deinit_fn| {
+                                            if (deinit_fn) |deinit_fn_| {
+                                                deinit_fn_(ctx_elem, alloc);
+                                            }
+                                        }
+
+                                        // Free the arrays
+                                        self_ctx.element_contexts.deinit();
+                                        self_ctx.element_deinits.deinit();
+
+                                        // Free the context itself
+                                        alloc.destroy(self_ctx);
+                                    }
+                                }
+                            }.deinit,
+                        ));
+                    }
+                }
+
+                return ValueList([len]E).init(try all_shrinks.toOwnedSlice(), allocator);
+            }
+        }.shrink,
+
+        .canShrinkWithoutContextFn = struct {
+            const ChildGen = child_gen;
+            fn canShrinkWithoutContext(value: [len]E) bool {
+                // Arrays need context for proper shrinking
+                _ = value;
+                return false;
+            }
+        }.canShrinkWithoutContext,
+    };
 }
 
 /// Enhanced integer generator with shrinking
@@ -261,7 +818,550 @@ fn intGen(comptime T: type, config: anytype) Generator(T) {
     };
 }
 
+/// Generate slices
+fn sliceGen(comptime E: type, child_gen: Generator(E), config: anytype) Generator([]E) {
+    const min_len = if (@hasField(@TypeOf(config), "min_len")) config.min_len else 0;
+    const max_len = if (@hasField(@TypeOf(config), "max_len")) config.max_len else 100;
+
+    return Generator([]E){
+        .generateFn = struct {
+            const ChildGen = child_gen;
+            const MinLen = min_len;
+            const MaxLen = max_len;
+
+            fn generate(random: std.Random, size: usize, allocator: std.mem.Allocator) error{OutOfMemory}!Value([]E) {
+                const len = random.intRangeLessThan(usize, MinLen, MaxLen + 1);
+
+                // Create a slice context to hold all element contexts
+                const SliceContext = struct {
+                    // The slice itself (so we can free it)
+                    slice: []E,
+                    // Dynamic array to hold element contexts
+                    element_contexts: std.ArrayList(?*anyopaque),
+                    element_deinits: std.ArrayList(?*const fn (?*anyopaque, std.mem.Allocator) void),
+
+                    fn deinit(ctx: ?*anyopaque, alloc: std.mem.Allocator) void {
+                        if (ctx) |ptr| {
+                            const self_ctx = @as(*@This(), @ptrCast(@alignCast(ptr)));
+
+                            // Call deinit on each element context
+                            for (self_ctx.element_contexts.items, self_ctx.element_deinits.items) |elem_ctx, deinit_fn| {
+                                if (deinit_fn) |deinit_fn_| {
+                                    deinit_fn_(elem_ctx, alloc);
+                                }
+                            }
+
+                            // Free the slice
+                            alloc.free(self_ctx.slice);
+
+                            // Free the arrays
+                            self_ctx.element_contexts.deinit();
+                            self_ctx.element_deinits.deinit();
+
+                            // Free the context itself
+                            alloc.destroy(self_ctx);
+                        }
+                    }
+                };
+
+                // Allocate the slice
+                const result = try allocator.alloc(E, len);
+                errdefer allocator.free(result);
+
+                // Create the context
+                var context = try allocator.create(SliceContext);
+                context.* = .{
+                    .slice = result,
+                    .element_contexts = std.ArrayList(?*anyopaque).init(allocator),
+                    .element_deinits = std.ArrayList(?*const fn (?*anyopaque, std.mem.Allocator) void).init(allocator),
+                };
+
+                // Generate each element
+                for (result) |*elem| {
+                    const element_value = try ChildGen.generate(random, size, allocator);
+                    elem.* = element_value.value;
+
+                    // Store the context if any
+                    if (element_value.context != null) {
+                        try context.element_contexts.append(element_value.context.?);
+                        try context.element_deinits.append(element_value.context_deinit.?);
+                    } else {
+                        try context.element_contexts.append(null);
+                        try context.element_deinits.append(null);
+                    }
+                }
+
+                return Value([]E).init(
+                    result,
+                    @as(*anyopaque, @ptrCast(context)),
+                    SliceContext.deinit,
+                );
+            }
+        }.generate,
+
+        .shrinkFn = struct {
+            const ChildGen = child_gen;
+            const MinLen = min_len;
+            fn shrink(value: []E, context: ?*anyopaque, allocator: std.mem.Allocator) error{OutOfMemory}!ValueList([]E) {
+                if (context == null) {
+                    // Can't shrink without context
+                    return ValueList([]E).init(&[_]Value([]E){}, allocator);
+                }
+
+                const slice_ctx = @as(*struct {
+                    slice: []E,
+                    element_contexts: std.ArrayList(?*anyopaque),
+                    element_deinits: std.ArrayList(?*const fn (?*anyopaque, std.mem.Allocator) void),
+                }, @ptrCast(@alignCast(context)));
+
+                var all_shrinks = std.ArrayList(Value([]E)).init(allocator);
+                defer all_shrinks.deinit();
+
+                // Strategy 1: Shrink the length (if possible)
+                if (value.len > MinLen) {
+                    // Try removing elements from the end
+                    const new_len = @max(MinLen, value.len / 2);
+
+                    // Create a new slice context
+                    const new_ctx = try allocator.create(struct {
+                        slice: []E,
+                        element_contexts: std.ArrayList(?*anyopaque),
+                        element_deinits: std.ArrayList(?*const fn (?*anyopaque, std.mem.Allocator) void),
+                    });
+                    new_ctx.* = .{
+                        .slice = try allocator.alloc(E, new_len),
+                        .element_contexts = std.ArrayList(?*anyopaque).init(allocator),
+                        .element_deinits = std.ArrayList(?*const fn (?*anyopaque, std.mem.Allocator) void).init(allocator),
+                    };
+
+                    // Copy the elements and contexts
+                    @memcpy(new_ctx.slice, value[0..new_len]);
+                    for (slice_ctx.element_contexts.items[0..new_len], slice_ctx.element_deinits.items[0..new_len]) |ctx, deinit_fn| {
+                        try new_ctx.element_contexts.append(ctx);
+                        try new_ctx.element_deinits.append(deinit_fn);
+                    }
+
+                    // Add to our list of shrinks
+                    try all_shrinks.append(Value([]E).init(
+                        new_ctx.slice,
+                        @as(*anyopaque, @ptrCast(new_ctx)),
+                        struct {
+                            fn deinit(ctx: ?*anyopaque, alloc: std.mem.Allocator) void {
+                                if (ctx) |ptr| {
+                                    const self_ctx = @as(*struct {
+                                        slice: []E,
+                                        element_contexts: std.ArrayList(?*anyopaque),
+                                        element_deinits: std.ArrayList(?*const fn (?*anyopaque, std.mem.Allocator) void),
+                                    }, @ptrCast(@alignCast(ptr)));
+
+                                    // Call deinit on each element context
+                                    for (self_ctx.element_contexts.items, self_ctx.element_deinits.items) |elem_ctx, deinit_fn| {
+                                        if (deinit_fn) |deinit_fn_| {
+                                            deinit_fn_(elem_ctx, alloc);
+                                        }
+                                    }
+
+                                    // Free the slice
+                                    alloc.free(self_ctx.slice);
+
+                                    // Free the arrays
+                                    self_ctx.element_contexts.deinit();
+                                    self_ctx.element_deinits.deinit();
+
+                                    // Free the context itself
+                                    alloc.destroy(self_ctx);
+                                }
+                            }
+                        }.deinit,
+                    ));
+                }
+
+                // Strategy 2: Shrink individual elements
+                for (value, 0..) |elem, i| {
+                    const elem_ctx = slice_ctx.element_contexts.items[i];
+                    const elem_shrinks = try ChildGen.shrink(elem, elem_ctx, allocator);
+                    defer elem_shrinks.deinit();
+
+                    // For each shrunk element, create a new slice with just that element shrunk
+                    for (elem_shrinks.values) |shrunk_elem| {
+                        // Create a new slice context
+                        const new_ctx = try allocator.create(struct {
+                            slice: []E,
+                            element_contexts: std.ArrayList(?*anyopaque),
+                            element_deinits: std.ArrayList(?*const fn (?*anyopaque, std.mem.Allocator) void),
+                        });
+                        new_ctx.* = .{
+                            .slice = try allocator.alloc(E, value.len),
+                            .element_contexts = std.ArrayList(?*anyopaque).init(allocator),
+                            .element_deinits = std.ArrayList(?*const fn (?*anyopaque, std.mem.Allocator) void).init(allocator),
+                        };
+
+                        // Copy the original slice
+                        @memcpy(new_ctx.slice, value);
+
+                        // Replace the shrunk element
+                        new_ctx.slice[i] = shrunk_elem.value;
+
+                        // Copy the contexts except for the one we're shrinking
+                        for (slice_ctx.element_contexts.items, slice_ctx.element_deinits.items, 0..) |ctx, deinit_fn, j| {
+                            if (j == i) {
+                                // Use the shrunk element's context
+                                try new_ctx.element_contexts.append(shrunk_elem.context);
+                                try new_ctx.element_deinits.append(shrunk_elem.context_deinit);
+                            } else {
+                                // Copy the original context
+                                try new_ctx.element_contexts.append(ctx);
+                                try new_ctx.element_deinits.append(deinit_fn);
+                            }
+                        }
+
+                        // Add to our list of shrinks
+                        try all_shrinks.append(Value([]E).init(
+                            new_ctx.slice,
+                            @as(*anyopaque, @ptrCast(new_ctx)),
+                            struct {
+                                fn deinit(ctx: ?*anyopaque, alloc: std.mem.Allocator) void {
+                                    if (ctx) |ptr| {
+                                        const self_ctx = @as(*struct {
+                                            slice: []E,
+                                            element_contexts: std.ArrayList(?*anyopaque),
+                                            element_deinits: std.ArrayList(?*const fn (?*anyopaque, std.mem.Allocator) void),
+                                        }, @ptrCast(@alignCast(ptr)));
+
+                                        // Call deinit on each element context
+                                        for (self_ctx.element_contexts.items, self_ctx.element_deinits.items) |ctx_elem, deinit_fn| {
+                                            if (deinit_fn) |deinit_fn_| {
+                                                deinit_fn_(ctx_elem, alloc);
+                                            }
+                                        }
+
+                                        // Free the slice
+                                        alloc.free(self_ctx.slice);
+
+                                        // Free the arrays
+                                        self_ctx.element_contexts.deinit();
+                                        self_ctx.element_deinits.deinit();
+
+                                        // Free the context itself
+                                        alloc.destroy(self_ctx);
+                                    }
+                                }
+                            }.deinit,
+                        ));
+                    }
+                }
+
+                return ValueList([]E).init(try all_shrinks.toOwnedSlice(), allocator);
+            }
+        }.shrink,
+
+        .canShrinkWithoutContextFn = struct {
+            fn canShrinkWithoutContext(value: []E) bool {
+                // Slices need context for proper shrinking
+                _ = value;
+                return false;
+            }
+        }.canShrinkWithoutContext,
+    };
+}
+
+/// Generate single pointers
+fn pointerGen(comptime Child: type, child_gen: Generator(Child)) Generator(*Child) {
+    return Generator(*Child){
+        .generateFn = struct {
+            const ChildGen = child_gen;
+
+            fn generate(random: std.Random, size: usize, allocator: std.mem.Allocator) error{OutOfMemory}!Value(*Child) {
+                // Create a pointer context
+                const PtrContext = struct {
+                    ptr: *Child,
+                    value_context: ?*anyopaque,
+                    context_deinit: ?*const fn (?*anyopaque, std.mem.Allocator) void,
+
+                    fn deinit(ctx: ?*anyopaque, alloc: std.mem.Allocator) void {
+                        if (ctx) |ptr| {
+                            const self_ctx = @as(*@This(), @ptrCast(@alignCast(ptr)));
+
+                            // Call deinit on the value context if any
+                            if (self_ctx.value_context != null and self_ctx.context_deinit != null) {
+                                self_ctx.context_deinit.?(self_ctx.value_context, alloc);
+                            }
+
+                            // Free the pointer
+                            alloc.destroy(self_ctx.ptr);
+
+                            // Free the context itself
+                            alloc.destroy(self_ctx);
+                        }
+                    }
+                };
+
+                // Generate the child value
+                const child_value = try ChildGen.generate(random, size, allocator);
+
+                // Allocate memory for the pointer
+                const ptr = try allocator.create(Child);
+                ptr.* = child_value.value;
+
+                // Create the context
+                const context = try allocator.create(PtrContext);
+                context.* = .{
+                    .ptr = ptr,
+                    .value_context = child_value.context,
+                    .context_deinit = child_value.context_deinit,
+                };
+
+                return Value(*Child).init(
+                    ptr,
+                    @as(*anyopaque, @ptrCast(context)),
+                    PtrContext.deinit,
+                );
+            }
+        }.generate,
+
+        .shrinkFn = struct {
+            const ChildGen = child_gen;
+            fn shrink(value: *Child, context: ?*anyopaque, allocator: std.mem.Allocator) error{OutOfMemory}!ValueList(*Child) {
+                if (context == null) {
+                    // Can't shrink without context
+                    return ValueList(*Child).init(&[_]Value(*Child){}, allocator);
+                }
+
+                const ptr_ctx = @as(*struct {
+                    ptr: *Child,
+                    value_context: ?*anyopaque,
+                    context_deinit: ?*const fn (?*anyopaque, std.mem.Allocator) void,
+                }, @ptrCast(@alignCast(context)));
+
+                // Shrink the pointed-to value
+                const value_shrinks = try ChildGen.shrink(value.*, ptr_ctx.value_context, allocator);
+                defer value_shrinks.deinit();
+
+                // Create a new pointer for each shrunk value
+                var result = try allocator.alloc(Value(*Child), value_shrinks.len());
+
+                for (value_shrinks.values, 0..) |shrunk_value, i| {
+                    // Allocate a new pointer
+                    const new_ptr = try allocator.create(Child);
+                    new_ptr.* = shrunk_value.value;
+
+                    // Create a new context
+                    const new_ctx = try allocator.create(struct {
+                        ptr: *Child,
+                        value_context: ?*anyopaque,
+                        context_deinit: ?*const fn (?*anyopaque, std.mem.Allocator) void,
+                    });
+                    new_ctx.* = .{
+                        .ptr = new_ptr,
+                        .value_context = shrunk_value.context,
+                        .context_deinit = shrunk_value.context_deinit,
+                    };
+
+                    // Store the result
+                    result[i] = Value(*Child).init(
+                        new_ptr,
+                        @as(*anyopaque, @ptrCast(new_ctx)),
+                        struct {
+                            fn deinit(ctx: ?*anyopaque, alloc: std.mem.Allocator) void {
+                                if (ctx) |ptr| {
+                                    const self_ctx = @as(*struct {
+                                        ptr: *Child,
+                                        value_context: ?*anyopaque,
+                                        context_deinit: ?*const fn (?*anyopaque, std.mem.Allocator) void,
+                                    }, @ptrCast(@alignCast(ptr)));
+
+                                    // Call deinit on the value context if any
+                                    if (self_ctx.value_context != null and self_ctx.context_deinit != null) {
+                                        self_ctx.context_deinit.?(self_ctx.value_context, alloc);
+                                    }
+
+                                    // Free the pointer
+                                    alloc.destroy(self_ctx.ptr);
+
+                                    // Free the context itself
+                                    alloc.destroy(self_ctx);
+                                }
+                            }
+                        }.deinit,
+                    );
+                }
+
+                return ValueList(*Child).init(result, allocator);
+            }
+        }.shrink,
+
+        .canShrinkWithoutContextFn = struct {
+            fn canShrinkWithoutContext(value: *Child) bool {
+                // Pointers need context for proper shrinking
+                _ = value;
+                return false;
+            }
+        }.canShrinkWithoutContext,
+    };
+}
+
 /// Helper functions (same as in the original generator.zig)
+/// Generate floats
+fn floatGen(comptime T: type, config: anytype) Generator(T) {
+    const min = if (@hasField(@TypeOf(config), "min")) config.min else -100.0;
+    const max = if (@hasField(@TypeOf(config), "max")) config.max else 100.0;
+
+    return Generator(T){
+        .generateFn = struct {
+            const Min = min;
+            const Max = max;
+            fn generate(random: std.Random, size: usize, allocator: std.mem.Allocator) error{OutOfMemory}!Value(T) {
+                _ = allocator;
+                _ = size;
+
+                // Sometimes generate special values (20% of the time)
+                if (random.float(f32) < 0.2) {
+                    var special_values: [8]T = undefined;
+                    const count = getFloatSpecialValues(T, Min, Max, &special_values);
+
+                    const index = random.intRangeLessThan(usize, 0, count);
+                    return Value(T).initNoContext(special_values[index]);
+                }
+
+                // Otherwise generate a random value in the range
+                return Value(T).initNoContext(Min + (Max - Min) * random.float(T));
+            }
+        }.generate,
+
+        .shrinkFn = struct {
+            const Min = min;
+            const Max = max;
+
+            fn shrink(value: T, context: ?*anyopaque, allocator: std.mem.Allocator) error{OutOfMemory}!ValueList(T) {
+                _ = context; // Float shrinking doesn't need context
+
+                // For floats, we have several shrinking strategies:
+                // 1. Shrink towards 0 (divide by 2)
+                // 2. Try boundaries near 0 (0, 1, -1)
+                // 3. Try absolute value (for negative numbers)
+                // 4. Try rounding to nearest integer
+
+                var shrink_candidates = std.ArrayList(Value(T)).init(allocator);
+                defer shrink_candidates.deinit();
+
+                // Skip shrinking for special values
+                if (std.math.isNan(value) or std.math.isInf(value)) {
+                    return ValueList(T).init(&[_]Value(T){}, allocator);
+                }
+
+                // Strategy 1: Shrink towards 0 (divide by 2)
+                if (value != 0) {
+                    try shrink_candidates.append(Value(T).initNoContext(value / 2));
+                }
+
+                // Strategy 2: Try boundaries near 0
+                if (value > 1) {
+                    try shrink_candidates.append(Value(T).initNoContext(1));
+                    try shrink_candidates.append(Value(T).initNoContext(0));
+                } else if (value < -1) {
+                    try shrink_candidates.append(Value(T).initNoContext(-1));
+                    try shrink_candidates.append(Value(T).initNoContext(0));
+                }
+
+                // Strategy 3: For negative numbers, try absolute value
+                if (value < 0) {
+                    try shrink_candidates.append(Value(T).initNoContext(-value));
+                }
+
+                // Strategy 4: Try rounding to nearest integer if not already an integer
+                const rounded = @round(value);
+                if (value != rounded) {
+                    try shrink_candidates.append(Value(T).initNoContext(rounded));
+                }
+
+                // Filter to only include values in range
+                var valid_count: usize = 0;
+                for (shrink_candidates.items) |shrnk| {
+                    if (shrnk.value >= Min and shrnk.value <= Max) {
+                        valid_count += 1;
+                    }
+                }
+
+                var filtered = try allocator.alloc(Value(T), valid_count);
+                var index: usize = 0;
+
+                for (shrink_candidates.items) |shrnk| {
+                    if (shrnk.value >= Min and shrnk.value <= Max) {
+                        filtered[index] = shrnk;
+                        index += 1;
+                    }
+                }
+
+                return ValueList(T).init(filtered, allocator);
+            }
+        }.shrink,
+
+        .canShrinkWithoutContextFn = struct {
+            fn canShrinkWithoutContext(value: T) bool {
+                // Floats can always be shrunk without context,
+                // as long as they are within the valid range and not special values
+                return value >= min and value <= max and
+                    !std.math.isNan(value) and !std.math.isInf(value);
+            }
+        }.canShrinkWithoutContext,
+    };
+}
+
+/// Get special values for float types
+fn getFloatSpecialValues(comptime T: type, min_val: T, max_val: T, out_values: []T) usize {
+    var list = std.ArrayListUnmanaged(T).initBuffer(out_values);
+    var max_included = false;
+
+    // Always include min boundary
+    list.appendAssumeCapacity(min_val);
+    if (min_val == max_val) max_included = true;
+
+    // Include 0 if it's within range
+    if (min_val <= 0 and max_val >= 0) {
+        list.appendAssumeCapacity(0);
+        if (0 == max_val) max_included = true;
+    }
+
+    // Include -1 and 1 if within range
+    if (min_val <= -1 and max_val >= -1) {
+        list.appendAssumeCapacity(-1);
+        if (-1 == max_val) max_included = true;
+    }
+    if (min_val <= 1 and max_val >= 1) {
+        list.appendAssumeCapacity(1);
+        if (1 == max_val) max_included = true;
+    }
+
+    // Include smallest normalized values if within range
+    const smallest_pos = std.math.floatMin(T);
+    if (min_val <= smallest_pos and max_val >= smallest_pos) {
+        list.appendAssumeCapacity(smallest_pos);
+        if (smallest_pos == max_val) max_included = true;
+    }
+    const smallest_neg = -std.math.floatMin(T);
+    if (min_val <= smallest_neg and max_val >= smallest_neg) {
+        list.appendAssumeCapacity(smallest_neg);
+        if (smallest_neg == max_val) max_included = true;
+    }
+
+    // Include infinity if within range (only possible if max_val is infinity)
+    if (max_val == std.math.inf(T)) {
+        list.appendAssumeCapacity(std.math.inf(T));
+        max_included = true;
+    }
+    if (min_val == -std.math.inf(T)) {
+        list.appendAssumeCapacity(-std.math.inf(T));
+        if (-std.math.inf(T) == max_val) max_included = true;
+    }
+
+    // Always include max boundary if not already included
+    if (!max_included) {
+        list.appendAssumeCapacity(max_val);
+    }
+
+    return list.items.len;
+}
+
 /// Get boundary values for integer types
 fn getIntBoundaryValues(comptime T: type, min_val: T, max_val: T, out_boundaries: []T) usize {
     var list = std.ArrayListUnmanaged(T).initBuffer(out_boundaries);
@@ -424,8 +1524,38 @@ pub fn gen(comptime T: type, config: anytype) Generator(T) {
     }
     return switch (@typeInfo(T)) {
         .int => intGen(T, config),
+        .float => floatGen(T, config),
+        .bool => boolGen(config),
+        .array => |info| arrayGen(info.child, info.len, gen(info.child, if (@hasField(@TypeOf(config), "child_config"))
+            config.child_config
+        else
+            @compileError("Expected 'child_config' field for array type " ++ @typeName(T)))),
+        .pointer => |info| switch (info.size) {
+            .slice => sliceGen(info.child, gen(info.child, if (@hasField(@TypeOf(config), "child_config"))
+                config.child_config
+            else
+                @compileError("Expected 'child_config' field for slice type " ++ @typeName(T))), config),
+            .one => pointerGen(info.child, gen(info.child, if (@hasField(@TypeOf(config), "child_config"))
+                config.child_config
+            else
+                .{})),
+            else => @compileError("Cannot generate pointers except slices and single pointers"),
+        },
         .@"struct" => structGen(T, config),
-        // Additional generator types could be added here
+        .@"enum" => enumGen(T),
+        .@"union" => |info| unionGen(T, info, config),
+        .optional => |info| optionalGen(
+            info.child,
+            gen(info.child, if (@hasField(@TypeOf(config), "child_config"))
+                config.child_config
+            else
+                .{}),
+            config,
+        ),
+        .vector => |info| vectorGen(info.child, info.len, gen(info.child, if (@hasField(@TypeOf(config), "child_config"))
+            config.child_config
+        else
+            @compileError("Expected 'child_config' field for vector type " ++ @typeName(T)))),
         else => @compileError("Cannot generate values of type " ++ @typeName(T)),
     };
 }
@@ -556,6 +1686,576 @@ pub fn MappedGenerator(comptime T: type, comptime U: type) type {
             }
             return false;
         }
+    };
+}
+
+/// Generate enum values
+fn enumGen(comptime T: type) Generator(T) {
+    const enum_info = @typeInfo(T).@"enum";
+    return Generator(T){
+        .generateFn = struct {
+            fn generate(random: std.Random, size: usize, allocator: std.mem.Allocator) error{OutOfMemory}!Value(T) {
+                _ = size;
+                _ = allocator;
+                const index = random.intRangeLessThan(usize, 0, enum_info.fields.len);
+                return Value(T).initNoContext(std.enums.values(T)[index]);
+            }
+        }.generate,
+
+        .shrinkFn = struct {
+            fn shrink(value: T, context: ?*anyopaque, allocator: std.mem.Allocator) error{OutOfMemory}!ValueList(T) {
+                _ = value;
+                _ = context;
+                // For enums, we don't implement shrinking yet
+                // A possible strategy would be to shrink towards the first enum value
+                return ValueList(T).init(&[_]Value(T){}, allocator);
+            }
+        }.shrink,
+
+        .canShrinkWithoutContextFn = struct {
+            fn canShrinkWithoutContext(value: T) bool {
+                _ = value;
+                return false; // Enums don't need shrinking for now
+            }
+        }.canShrinkWithoutContext,
+    };
+}
+
+/// Generate union values
+fn unionGen(comptime T: type, info: std.builtin.Type.Union, config: anytype) Generator(T) {
+    const field_names = comptime blk: {
+        var names: [info.fields.len][]const u8 = undefined;
+        for (info.fields, 0..) |field, i| {
+            names[i] = field.name;
+        }
+        break :blk names;
+    };
+
+    return Generator(T){
+        .generateFn = struct {
+            const FieldNames = field_names;
+
+            fn generate(random: std.Random, size: usize, allocator: std.mem.Allocator) error{OutOfMemory}!Value(T) {
+                // Create a union context
+                const UnionContext = struct {
+                    tag: std.meta.Tag(T),
+                    field_context: ?*anyopaque,
+                    context_deinit: ?*const fn (?*anyopaque, std.mem.Allocator) void,
+
+                    fn deinit(ctx: ?*anyopaque, alloc: std.mem.Allocator) void {
+                        if (ctx) |ptr| {
+                            const self_ctx = @as(*@This(), @ptrCast(@alignCast(ptr)));
+
+                            // Call deinit on the field context if any
+                            if (self_ctx.field_context != null and self_ctx.context_deinit != null) {
+                                self_ctx.context_deinit.?(self_ctx.field_context, alloc);
+                            }
+
+                            // Free the context itself
+                            alloc.destroy(self_ctx);
+                        }
+                    }
+                };
+
+                // Randomly select a field index
+                const field_index = random.intRangeLessThan(usize, 0, FieldNames.len);
+                const field_name = FieldNames[field_index];
+
+                // Use inline for to handle each field at compile time
+                inline for (info.fields) |field| {
+                    if (std.mem.eql(u8, field.name, field_name)) {
+                        // Get field-specific config if available
+                        const field_config = if (@hasField(@TypeOf(config), field.name))
+                            @field(config, field.name)
+                        else
+                            .{};
+
+                        // Generate a value for the selected field
+                        const field_generator = gen(field.type, field_config);
+                        const field_value = try field_generator.generate(random, size, allocator);
+
+                        // Create the union value
+                        const union_value = @unionInit(T, field.name, field_value.value);
+
+                        // Create the context
+                        const context = try allocator.create(UnionContext);
+                        context.* = .{
+                            .tag = @field(std.meta.Tag(T), field.name),
+                            .field_context = field_value.context,
+                            .context_deinit = field_value.context_deinit,
+                        };
+
+                        return Value(T).init(
+                            union_value,
+                            @as(*anyopaque, @ptrCast(context)),
+                            UnionContext.deinit,
+                        );
+                    }
+                }
+
+                unreachable; // Should never reach here
+            }
+        }.generate,
+
+        .shrinkFn = struct {
+            fn shrink(value: T, context: ?*anyopaque, allocator: std.mem.Allocator) error{OutOfMemory}!ValueList(T) {
+                if (context == null) {
+                    // Can't shrink without context
+                    return ValueList(T).init(&[_]Value(T){}, allocator);
+                }
+
+                const union_ctx = @as(*struct {
+                    tag: std.meta.Tag(T),
+                    field_context: ?*anyopaque,
+                    context_deinit: ?*const fn (?*anyopaque, std.mem.Allocator) void,
+                }, @ptrCast(@alignCast(context)));
+
+                // Get the active tag
+                const active_tag = std.meta.activeTag(value);
+
+                // Use inline for to handle each field at compile time
+                // TODO: find a way to fix this thing
+                inline for (info.fields) |field| {
+                    if (active_tag == @field(std.meta.Tag(T), field.name)) {
+                        // Get field-specific config if available
+                        const field_config = if (@hasField(@TypeOf(config), field.name))
+                            @field(config, field.name)
+                        else
+                            .{};
+
+                        // Get the field value
+                        const field_value = @field(value, field.name);
+
+                        // Create a generator for the field type
+                        const field_generator = gen(field.type, field_config);
+
+                        // Shrink the field value
+                        const field_shrinks = try field_generator.shrink(field_value, union_ctx.field_context, allocator);
+                        defer field_shrinks.deinit();
+
+                        // Create a union value for each shrunk field value
+                        var result = try allocator.alloc(Value(T), field_shrinks.len());
+
+                        for (field_shrinks.values, 0..) |shrunk_field, i| {
+                            // Create the union value
+                            const union_value = @unionInit(T, field.name, shrunk_field.value);
+
+                            // Create a new context
+                            const new_ctx = try allocator.create(struct {
+                                tag: std.meta.Tag(T),
+                                field_context: ?*anyopaque,
+                                context_deinit: ?*const fn (?*anyopaque, std.mem.Allocator) void,
+                            });
+                            new_ctx.* = .{
+                                .tag = active_tag,
+                                .field_context = shrunk_field.context,
+                                .context_deinit = shrunk_field.context_deinit,
+                            };
+
+                            // Store the result
+                            result[i] = Value(T).init(
+                                union_value,
+                                @as(*anyopaque, @ptrCast(new_ctx)),
+                                struct {
+                                    fn deinit(ctx: ?*anyopaque, alloc: std.mem.Allocator) void {
+                                        if (ctx) |ptr| {
+                                            const self_ctx = @as(*struct {
+                                                tag: std.meta.Tag(T),
+                                                field_context: ?*anyopaque,
+                                                context_deinit: ?*const fn (?*anyopaque, std.mem.Allocator) void,
+                                            }, @ptrCast(@alignCast(ptr)));
+
+                                            // Call deinit on the field context if any
+                                            if (self_ctx.field_context != null and self_ctx.context_deinit != null) {
+                                                self_ctx.context_deinit.?(self_ctx.field_context, alloc);
+                                            }
+
+                                            // Free the context itself
+                                            alloc.destroy(self_ctx);
+                                        }
+                                    }
+                                }.deinit,
+                            );
+                        }
+
+                        return ValueList(T).init(result, allocator);
+                    }
+                }
+
+                // If we get here, something went wrong
+                return ValueList(T).init(&[_]Value(T){}, allocator);
+            }
+        }.shrink,
+
+        .canShrinkWithoutContextFn = struct {
+            fn canShrinkWithoutContext(value: T) bool {
+                // Unions need context for proper shrinking
+                _ = value;
+                return false;
+            }
+        }.canShrinkWithoutContext,
+    };
+}
+
+/// Generate optional values
+fn optionalGen(comptime Child: type, child_gen: Generator(Child), config: anytype) Generator(?Child) {
+    // Default null probability if not specified
+    const null_prob: f32 = if (@hasField(@TypeOf(config), "null_probability"))
+        config.null_probability
+    else
+        0.5;
+
+    return Generator(?Child){
+        .generateFn = struct {
+            const ChildGen = child_gen;
+            const NullProb = null_prob;
+
+            fn generate(random: std.Random, size: usize, allocator: std.mem.Allocator) error{OutOfMemory}!Value(?Child) {
+                // Create an optional context
+                const OptContext = struct {
+                    is_null: bool,
+                    value_context: ?*anyopaque,
+                    context_deinit: ?*const fn (?*anyopaque, std.mem.Allocator) void,
+
+                    fn deinit(ctx: ?*anyopaque, alloc: std.mem.Allocator) void {
+                        if (ctx) |ptr| {
+                            const self_ctx = @as(*@This(), @ptrCast(@alignCast(ptr)));
+
+                            // Call deinit on the value context if any
+                            if (!self_ctx.is_null and self_ctx.value_context != null and self_ctx.context_deinit != null) {
+                                self_ctx.context_deinit.?(self_ctx.value_context, alloc);
+                            }
+
+                            // Free the context itself
+                            alloc.destroy(self_ctx);
+                        }
+                    }
+                };
+
+                // Generate null with probability NullProb
+                if (random.float(f32) < NullProb) {
+                    // Create a context for null
+                    const context = try allocator.create(OptContext);
+                    context.* = .{
+                        .is_null = true,
+                        .value_context = null,
+                        .context_deinit = null,
+                    };
+
+                    return Value(?Child).init(
+                        null,
+                        @as(*anyopaque, @ptrCast(context)),
+                        OptContext.deinit,
+                    );
+                } else {
+                    // Generate a value
+                    const child_value = try ChildGen.generate(random, size, allocator);
+
+                    // Create a context for the value
+                    const context = try allocator.create(OptContext);
+                    context.* = .{
+                        .is_null = false,
+                        .value_context = child_value.context,
+                        .context_deinit = child_value.context_deinit,
+                    };
+
+                    return Value(?Child).init(
+                        child_value.value,
+                        @as(*anyopaque, @ptrCast(context)),
+                        OptContext.deinit,
+                    );
+                }
+            }
+        }.generate,
+
+        .shrinkFn = struct {
+            const ChildGen = child_gen;
+            fn shrink(value: ?Child, context: ?*anyopaque, allocator: std.mem.Allocator) error{OutOfMemory}!ValueList(?Child) {
+                if (context == null) {
+                    // Can't shrink without context
+                    return ValueList(?Child).init(&[_]Value(?Child){}, allocator);
+                }
+
+                const opt_ctx = @as(*struct {
+                    is_null: bool,
+                    value_context: ?*anyopaque,
+                    context_deinit: ?*const fn (?*anyopaque, std.mem.Allocator) void,
+                }, @ptrCast(@alignCast(context)));
+
+                // For optionals, the simplest value is null
+                if (value != null) {
+                    // If we have a value, we can shrink to null
+                    var result = try allocator.alloc(Value(?Child), 1);
+
+                    // Create a context for null
+                    const null_ctx = try allocator.create(struct {
+                        is_null: bool,
+                        value_context: ?*anyopaque,
+                        context_deinit: ?*const fn (?*anyopaque, std.mem.Allocator) void,
+                    });
+                    null_ctx.* = .{
+                        .is_null = true,
+                        .value_context = null,
+                        .context_deinit = null,
+                    };
+
+                    // Store the null value
+                    result[0] = Value(?Child).init(
+                        null,
+                        @as(*anyopaque, @ptrCast(null_ctx)),
+                        struct {
+                            fn deinit(ctx: ?*anyopaque, alloc: std.mem.Allocator) void {
+                                if (ctx) |ptr| {
+                                    const self_ctx = @as(*struct {
+                                        is_null: bool,
+                                        value_context: ?*anyopaque,
+                                        context_deinit: ?*const fn (?*anyopaque, std.mem.Allocator) void,
+                                    }, @ptrCast(@alignCast(ptr)));
+
+                                    // No need to call deinit for null values
+                                    // Free the context itself
+                                    alloc.destroy(self_ctx);
+                                }
+                            }
+                        }.deinit,
+                    );
+
+                    // If the value itself can be shrunk, add those shrinks too
+                    if (!opt_ctx.is_null) {
+                        const child_shrinks = try ChildGen.shrink(value.?, opt_ctx.value_context, allocator);
+                        defer child_shrinks.deinit();
+
+                        // Add each shrunk child value
+                        if (child_shrinks.len() > 0) {
+                            // Resize the result array
+                            const new_result = try allocator.realloc(result, 1 + child_shrinks.len());
+                            result = new_result;
+
+                            for (child_shrinks.values, 0..) |shrunk_child, i| {
+                                // Create a context for the shrunk value
+                                const shrunk_ctx = try allocator.create(struct {
+                                    is_null: bool,
+                                    value_context: ?*anyopaque,
+                                    context_deinit: ?*const fn (?*anyopaque, std.mem.Allocator) void,
+                                });
+                                shrunk_ctx.* = .{
+                                    .is_null = false,
+                                    .value_context = shrunk_child.context,
+                                    .context_deinit = shrunk_child.context_deinit,
+                                };
+
+                                // Store the shrunk value
+                                result[1 + i] = Value(?Child).init(
+                                    shrunk_child.value,
+                                    @as(*anyopaque, @ptrCast(shrunk_ctx)),
+                                    struct {
+                                        fn deinit(ctx: ?*anyopaque, alloc: std.mem.Allocator) void {
+                                            if (ctx) |ptr| {
+                                                const self_ctx = @as(*struct {
+                                                    is_null: bool,
+                                                    value_context: ?*anyopaque,
+                                                    context_deinit: ?*const fn (?*anyopaque, std.mem.Allocator) void,
+                                                }, @ptrCast(@alignCast(ptr)));
+
+                                                // Call deinit on the value context if any
+                                                if (!self_ctx.is_null and self_ctx.value_context != null and self_ctx.context_deinit != null) {
+                                                    self_ctx.context_deinit.?(self_ctx.value_context, alloc);
+                                                }
+
+                                                // Free the context itself
+                                                alloc.destroy(self_ctx);
+                                            }
+                                        }
+                                    }.deinit,
+                                );
+                            }
+                        }
+                    }
+
+                    return ValueList(?Child).init(result, allocator);
+                } else {
+                    // Can't shrink null
+                    return ValueList(?Child).init(&[_]Value(?Child){}, allocator);
+                }
+            }
+        }.shrink,
+
+        .canShrinkWithoutContextFn = struct {
+            fn canShrinkWithoutContext(value: ?Child) bool {
+                // Optionals need context for proper shrinking
+                _ = value;
+                return false;
+            }
+        }.canShrinkWithoutContext,
+    };
+}
+
+/// Generate vectors
+fn vectorGen(comptime E: type, comptime len: usize, child_gen: Generator(E)) Generator(@Vector(len, E)) {
+    return Generator(@Vector(len, E)){
+        .generateFn = struct {
+            const ChildGen = child_gen;
+            fn generate(random: std.Random, size: usize, allocator: std.mem.Allocator) error{OutOfMemory}!Value(@Vector(len, E)) {
+                // Create a vector context (similar to array context)
+                const VectorContext = struct {
+                    // Dynamic array to hold element contexts
+                    element_contexts: std.ArrayList(?*anyopaque),
+                    element_deinits: std.ArrayList(?*const fn (?*anyopaque, std.mem.Allocator) void),
+
+                    fn deinit(ctx: ?*anyopaque, alloc: std.mem.Allocator) void {
+                        if (ctx) |ptr| {
+                            const self_ctx = @as(*@This(), @ptrCast(@alignCast(ptr)));
+
+                            // Call deinit on each element context
+                            for (self_ctx.element_contexts.items, self_ctx.element_deinits.items) |elem_ctx, deinit_fn| {
+                                if (deinit_fn) |deinit_fn_| {
+                                    deinit_fn_(elem_ctx, alloc);
+                                }
+                            }
+
+                            // Free the arrays
+                            self_ctx.element_contexts.deinit();
+                            self_ctx.element_deinits.deinit();
+
+                            // Free the context itself
+                            alloc.destroy(self_ctx);
+                        }
+                    }
+                };
+
+                // Create the context
+                var context = try allocator.create(VectorContext);
+                context.* = .{
+                    .element_contexts = std.ArrayList(?*anyopaque).init(allocator),
+                    .element_deinits = std.ArrayList(?*const fn (?*anyopaque, std.mem.Allocator) void).init(allocator),
+                };
+
+                // Generate each element
+                var result_array: [len]E = undefined;
+                for (&result_array) |*elem| {
+                    const element_value = try ChildGen.generate(random, size, allocator);
+                    elem.* = element_value.value;
+
+                    // Store the context if any
+                    if (element_value.context != null) {
+                        try context.element_contexts.append(element_value.context.?);
+                        try context.element_deinits.append(element_value.context_deinit.?);
+                    } else {
+                        try context.element_contexts.append(null);
+                        try context.element_deinits.append(null);
+                    }
+                }
+
+                return Value(@Vector(len, E)).init(
+                    @as(@Vector(len, E), result_array),
+                    @as(*anyopaque, @ptrCast(context)),
+                    VectorContext.deinit,
+                );
+            }
+        }.generate,
+
+        .shrinkFn = struct {
+            const ChildGen = child_gen;
+            fn shrink(value: @Vector(len, E), context: ?*anyopaque, allocator: std.mem.Allocator) error{OutOfMemory}!ValueList(@Vector(len, E)) {
+                if (context == null) {
+                    // Can't shrink without context
+                    return ValueList(@Vector(len, E)).init(&[_]Value(@Vector(len, E)){}, allocator);
+                }
+
+                const vector_ctx = @as(*struct {
+                    element_contexts: std.ArrayList(?*anyopaque),
+                    element_deinits: std.ArrayList(?*const fn (?*anyopaque, std.mem.Allocator) void),
+                }, @ptrCast(@alignCast(context)));
+
+                // For vectors, we shrink one element at a time (similar to arrays)
+                var all_shrinks = std.ArrayList(Value(@Vector(len, E))).init(allocator);
+                defer all_shrinks.deinit();
+
+                // Convert vector to array for easier element access
+                var value_array: [len]E = undefined;
+                for (0..len) |i| {
+                    value_array[i] = value[i];
+                }
+
+                // Try shrinking each element
+                for (value_array, 0..) |elem, i| {
+                    const elem_ctx = vector_ctx.element_contexts.items[i];
+                    const elem_shrinks = try ChildGen.shrink(elem, elem_ctx, allocator);
+                    defer elem_shrinks.deinit();
+
+                    // For each shrunk element, create a new vector with just that element shrunk
+                    for (elem_shrinks.values) |shrunk_elem| {
+                        // Create a new vector context
+                        const new_ctx = try allocator.create(struct {
+                            element_contexts: std.ArrayList(?*anyopaque),
+                            element_deinits: std.ArrayList(?*const fn (?*anyopaque, std.mem.Allocator) void),
+                        });
+                        new_ctx.* = .{
+                            .element_contexts = std.ArrayList(?*anyopaque).init(allocator),
+                            .element_deinits = std.ArrayList(?*const fn (?*anyopaque, std.mem.Allocator) void).init(allocator),
+                        };
+
+                        // Copy the original contexts except for the one we're shrinking
+                        for (vector_ctx.element_contexts.items, vector_ctx.element_deinits.items, 0..) |ctx, deinit_fn, j| {
+                            if (j == i) {
+                                // Use the shrunk element's context
+                                try new_ctx.element_contexts.append(shrunk_elem.context);
+                                try new_ctx.element_deinits.append(shrunk_elem.context_deinit);
+                            } else {
+                                // Copy the original context
+                                try new_ctx.element_contexts.append(ctx);
+                                try new_ctx.element_deinits.append(deinit_fn);
+                            }
+                        }
+
+                        // Create a new array with the shrunk element
+                        var new_array = value_array;
+                        new_array[i] = shrunk_elem.value;
+
+                        // Add to our list of shrinks
+                        try all_shrinks.append(Value(@Vector(len, E)).init(
+                            @as(@Vector(len, E), new_array),
+                            @as(*anyopaque, @ptrCast(new_ctx)),
+                            struct {
+                                fn deinit(ctx: ?*anyopaque, alloc: std.mem.Allocator) void {
+                                    if (ctx) |ptr| {
+                                        const self_ctx = @as(*struct {
+                                            element_contexts: std.ArrayList(?*anyopaque),
+                                            element_deinits: std.ArrayList(?*const fn (?*anyopaque, std.mem.Allocator) void),
+                                        }, @ptrCast(@alignCast(ptr)));
+
+                                        // Call deinit on each element context
+                                        for (self_ctx.element_contexts.items, self_ctx.element_deinits.items) |ctx_elem, deinit_fn| {
+                                            if (deinit_fn) |deinit_fn_| {
+                                                // ai? are we sure that we should be passing the elem_ctx into this deinit?
+                                                deinit_fn_(ctx_elem, alloc);
+                                            }
+                                        }
+
+                                        // Free the arrays
+                                        self_ctx.element_contexts.deinit();
+                                        self_ctx.element_deinits.deinit();
+
+                                        // Free the context itself
+                                        alloc.destroy(self_ctx);
+                                    }
+                                }
+                            }.deinit,
+                        ));
+                    }
+                }
+
+                return ValueList(@Vector(len, E)).init(try all_shrinks.toOwnedSlice(), allocator);
+            }
+        }.shrink,
+
+        .canShrinkWithoutContextFn = struct {
+            fn canShrinkWithoutContext(value: @Vector(len, E)) bool {
+                // Vectors need context for proper shrinking
+                _ = value;
+                return false;
+            }
+        }.canShrinkWithoutContext,
     };
 }
 
