@@ -46,7 +46,7 @@ pub fn Value(comptime T: type) type {
 }
 
 /// Combine multiple generators with a tuple
-pub fn tuple(comptime generators: anytype) blk: {
+pub fn tuple(generators: anytype) blk: {
     const fields = std.meta.fields(@TypeOf(generators));
     var types: [fields.len]type = undefined;
     for (fields, 0..) |field, i| {
@@ -231,7 +231,7 @@ pub fn tuple(comptime generators: anytype) blk: {
 }
 
 /// Choose between multiple generators
-pub fn oneOf(comptime generators: anytype, weights: ?[]const f32) blk: {
+pub fn oneOf(generators: anytype, weights: ?[]const f32) blk: {
     // Get the type from the first generator
     const T = @TypeOf(generators[0]).ValueType;
 
@@ -577,7 +577,7 @@ fn intShrink(comptime T: type, value: T, context: ?*anyopaque, allocator: std.me
 }
 
 /// Generate arrays
-fn arrayGen(comptime E: type, comptime len: usize, child_gen: Generator(E)) Generator([len]E) {
+fn arrayGen(comptime E: type, comptime len: usize, comptime child_gen: Generator(E)) Generator([len]E) {
     return Generator([len]E){
         .generateFn = struct {
             const ChildGen = child_gen;
@@ -2227,7 +2227,6 @@ fn vectorGen(comptime E: type, comptime len: usize, child_gen: Generator(E)) Gen
                                         // Call deinit on each element context
                                         for (self_ctx.element_contexts.items, self_ctx.element_deinits.items) |ctx_elem, deinit_fn| {
                                             if (deinit_fn) |deinit_fn_| {
-                                                // ai? are we sure that we should be passing the elem_ctx into this deinit?
                                                 deinit_fn_(ctx_elem, alloc);
                                             }
                                         }

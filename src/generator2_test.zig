@@ -9,6 +9,8 @@ const ValueList = generator2.ValueList;
 const Property = property.Property;
 const property_fn = property.property;
 const PropertyResult = property.PropertyResult;
+const tuple = generator2.tuple;
+const oneOf = generator2.oneOf;
 
 test "int generator produces values within range" {
     // Create a generator for integers between 10 and 20
@@ -91,7 +93,7 @@ test "map with shrinking" {
             return n * 2;
         }
     }.double);
-    
+
     const halve = @as(?*const fn (i32) ?i32, &struct {
         fn halve(n: i32) ?i32 {
             if (@rem(n, 2) == 0) {
@@ -401,6 +403,519 @@ test "float shrinking produces simpler values" {
 
         try std.testing.expect(found_simpler);
     }
+}
+
+test "array generator produces arrays of the correct length" {
+    // Generate [5]i32 arrays
+    const arrayGenerator = gen([5]i32, .{
+        .child_config = .{ .min = -10, .max = 10 },
+    });
+
+    var prng = std.Random.DefaultPrng.init(42);
+    const random = prng.random();
+
+    // Generate a few arrays and check their length
+    for (0..10) |_| {
+        const array = try arrayGenerator.generate(random, 10, std.testing.allocator);
+        defer array.deinit(std.testing.allocator);
+
+        try std.testing.expectEqual(@as(usize, 5), array.value.len);
+    }
+}
+
+test "array generator respects element bounds" {
+    // Generate [10]i32 arrays with elements between 5 and 15
+    const arrayGenerator = gen([10]i32, .{
+        .child_config = .{ .min = 5, .max = 15 },
+    });
+
+    var prng = std.Random.DefaultPrng.init(42);
+    const random = prng.random();
+
+    // Generate arrays and check all elements are within bounds
+    for (0..10) |_| {
+        const array = try arrayGenerator.generate(random, 10, std.testing.allocator);
+        defer array.deinit(std.testing.allocator);
+
+        for (array.value) |value| {
+            try std.testing.expect(value >= 5 and value <= 15);
+        }
+    }
+}
+
+test "array shrinking preserves element bounds" {
+    // Generate [5]i32 arrays with elements between 5 and 15
+    const arrayGenerator = gen([5]i32, .{
+        .child_config = .{ .min = 5, .max = 15 },
+    });
+
+    var prng = std.Random.DefaultPrng.init(42);
+    const random = prng.random();
+
+    // Generate a value then shrink it
+    const array = try arrayGenerator.generate(random, 10, std.testing.allocator);
+    defer array.deinit(std.testing.allocator);
+
+    const shrinks = try arrayGenerator.shrink(array.value, array.context, std.testing.allocator);
+    defer shrinks.deinit();
+
+    // Verify that all shrink candidates respect the element bounds
+    for (shrinks.values) |shrink| {
+        for (shrink.value) |elem| {
+            try std.testing.expect(elem >= 5 and elem <= 15);
+        }
+    }
+}
+
+test "slice generator produces slices of correct length range" {
+    // Generate []i32 slices with lengths between 3 and 7
+    const sliceGenerator = gen([]i32, .{
+        .min_len = 3,
+        .max_len = 7,
+        .child_config = .{ .min = -10, .max = 10 },
+    });
+
+    var prng = std.Random.DefaultPrng.init(42);
+    const random = prng.random();
+
+    // Generate slices and check their length is within range
+    for (0..10) |_| {
+        const slice = try sliceGenerator.generate(random, 10, std.testing.allocator);
+        defer slice.deinit(std.testing.allocator);
+
+        try std.testing.expect(slice.value.len >= 3 and slice.value.len <= 7);
+    }
+}
+
+test "slice generator respects element bounds" {
+    // Generate []i32 slices with elements between 5 and 15
+    const sliceGenerator = gen([]i32, .{
+        .min_len = 1,
+        .max_len = 10,
+        .child_config = .{ .min = 5, .max = 15 },
+    });
+
+    var prng = std.Random.DefaultPrng.init(42);
+    const random = prng.random();
+
+    // Generate slices and check all elements are within bounds
+    for (0..10) |_| {
+        const slice = try sliceGenerator.generate(random, 10, std.testing.allocator);
+        defer slice.deinit(std.testing.allocator);
+
+        for (slice.value) |value| {
+            try std.testing.expect(value >= 5 and value <= 15);
+        }
+    }
+}
+
+test "slice shrinking works correctly" {
+    // Generate []i32 slices
+    const sliceGenerator = gen([]i32, .{
+        .min_len = 5,
+        .max_len = 10,
+        .child_config = .{ .min = -10, .max = 10 },
+    });
+
+    var prng = std.Random.DefaultPrng.init(42);
+    const random = prng.random();
+
+    // Generate a value then shrink it
+    const slice = try sliceGenerator.generate(random, 10, std.testing.allocator);
+    defer slice.deinit(std.testing.allocator);
+
+    const shrinks = try sliceGenerator.shrink(slice.value, slice.context, std.testing.allocator);
+    defer shrinks.deinit();
+
+    // Verify we have some shrink candidates
+    try std.testing.expect(shrinks.len() > 0);
+
+    // Verify that shrinks are either shorter or have simpler elements
+    for (shrinks.values) |shrink| {
+        // Either the shrink is shorter, or its elements are simpler
+        var is_valid_shrink = shrink.value.len < slice.value.len;
+
+        if (!is_valid_shrink) {
+            // Check if elements are simpler
+            for (shrink.value, slice.value) |shrink_elem, orig_elem| {
+                if (@abs(shrink_elem) < @abs(orig_elem)) {
+                    is_valid_shrink = true;
+                    break;
+                }
+            }
+        }
+
+        try std.testing.expect(is_valid_shrink);
+    }
+}
+
+test "single pointer generator works correctly" {
+    // Create a generator for pointers to integers
+    const intPtrGenerator = gen(*i32, .{
+        .child_config = .{ .min = -50, .max = 50 },
+    });
+
+    var prng = std.Random.DefaultPrng.init(42);
+    const random = prng.random();
+
+    // Generate a pointer and check its value
+    const int_ptr = try intPtrGenerator.generate(random, 10, std.testing.allocator);
+    defer int_ptr.deinit(std.testing.allocator);
+
+    try std.testing.expect(int_ptr.value.* >= -50 and int_ptr.value.* <= 50);
+}
+
+test "pointer shrinking works correctly" {
+    // Create a generator for pointers to integers
+    const intPtrGenerator = gen(*i32, .{
+        .child_config = .{ .min = -50, .max = 50 },
+    });
+
+    var prng = std.Random.DefaultPrng.init(42);
+    const random = prng.random();
+
+    // Generate a value then shrink it
+    const ptr = try intPtrGenerator.generate(random, 10, std.testing.allocator);
+    defer ptr.deinit(std.testing.allocator);
+
+    // Only test shrinking for non-zero values
+    if (ptr.value.* != 0) {
+        const shrinks = try intPtrGenerator.shrink(ptr.value, ptr.context, std.testing.allocator);
+        defer shrinks.deinit();
+
+        // Verify we have some shrink candidates
+        try std.testing.expect(shrinks.len() > 0);
+
+        // Verify that shrinks have simpler pointed-to values
+        for (shrinks.values) |shrink| {
+            try std.testing.expect(@abs(shrink.value.*) <= @abs(ptr.value.*));
+        }
+    }
+}
+
+test "enum generator produces valid enum values" {
+    const Color = enum {
+        red,
+        green,
+        blue,
+        yellow,
+        purple,
+    };
+
+    // Create a generator for the Color enum
+    const colorGenerator = gen(Color, .{});
+
+    var prng = std.Random.DefaultPrng.init(42);
+    const random = prng.random();
+
+    // Track which enum values we've seen
+    var seen = [_]bool{false} ** 5;
+
+    // Generate many values to ensure we get all enum variants
+    for (0..100) |_| {
+        const color = try colorGenerator.generate(random, 10, std.testing.allocator);
+        defer color.deinit(std.testing.allocator);
+
+        // Verify it's a valid enum value
+        switch (color.value) {
+            .red => seen[0] = true,
+            .green => seen[1] = true,
+            .blue => seen[2] = true,
+            .yellow => seen[3] = true,
+            .purple => seen[4] = true,
+        }
+    }
+
+    // We should have seen all enum values
+    for (seen, 0..) |was_seen, i| {
+        try std.testing.expect(was_seen);
+        if (!was_seen) {
+            std.debug.print("Didn't see enum value at index {d}\n", .{i});
+        }
+    }
+}
+
+test "union generator produces valid values" {
+    const ValueUnion = union(enum) {
+        int: i32,
+        float: f64,
+        boolean: bool,
+    };
+
+    // Create a generator for the Value union
+    const valueGenerator = gen(ValueUnion, .{
+        .int = .{ .min = 1, .max = 100 },
+        .float = .{ .min = -10.0, .max = 10.0 },
+        .boolean = .{},
+    });
+
+    var prng = std.Random.DefaultPrng.init(42);
+    const random = prng.random();
+
+    // Track which union variants we've seen
+    var seen_int = false;
+    var seen_float = false;
+    var seen_boolean = false;
+
+    // Generate many values to ensure we get all variants
+    for (0..100) |_| {
+        const value = try valueGenerator.generate(random, 10, std.testing.allocator);
+        defer value.deinit(std.testing.allocator);
+
+        // Determine which variant we got and verify its constraints
+        const active_tag = std.meta.activeTag(value.value);
+        switch (active_tag) {
+            .int => {
+                seen_int = true;
+                try std.testing.expect(value.value.int >= 1 and value.value.int <= 100);
+            },
+            .float => {
+                seen_float = true;
+                try std.testing.expect(value.value.float >= -10.0 and value.value.float <= 10.0);
+            },
+            .boolean => {
+                seen_boolean = true;
+                try std.testing.expect(value.value.boolean == true or value.value.boolean == false);
+            },
+        }
+
+        if (seen_int and seen_float and seen_boolean) break;
+    }
+
+    // We should have seen all union variants
+    try std.testing.expect(seen_int);
+    try std.testing.expect(seen_float);
+    try std.testing.expect(seen_boolean);
+}
+
+test "union shrinking works correctly" {
+    const ValueUnion = union(enum) {
+        int: i32,
+        float: f64,
+    };
+
+    // Create a generator for the Value union
+    const valueGenerator = gen(ValueUnion, .{
+        .int = .{ .min = -100, .max = 100 },
+        .float = .{ .min = -10.0, .max = 10.0 },
+    });
+
+    var prng = std.Random.DefaultPrng.init(42);
+    const random = prng.random();
+
+    // Generate a value then shrink it
+    const value = try valueGenerator.generate(random, 10, std.testing.allocator);
+    defer value.deinit(std.testing.allocator);
+
+    const shrinks = try valueGenerator.shrink(value.value, value.context, std.testing.allocator);
+    defer shrinks.deinit();
+
+    // Verify that all shrinks have the same active tag as the original
+    const original_tag = std.meta.activeTag(value.value);
+    for (shrinks.values) |shrink| {
+        try std.testing.expectEqual(original_tag, std.meta.activeTag(shrink.value));
+    }
+}
+
+test "optional generator produces both null and values" {
+    // Create a generator for optional integers
+    const optIntGenerator = gen(?i32, .{
+        .child_config = .{ .min = 1, .max = 100 },
+        .null_probability = 0.5, // 50% chance of null
+    });
+
+    var prng = std.Random.DefaultPrng.init(42);
+    const random = prng.random();
+
+    var seen_null = false;
+    var seen_value = false;
+
+    // Generate values until we've seen both null and non-null
+    for (0..100) |_| {
+        const value = try optIntGenerator.generate(random, 10, std.testing.allocator);
+        defer value.deinit(std.testing.allocator);
+
+        if (value.value == null) {
+            seen_null = true;
+        } else {
+            seen_value = true;
+            // Check that non-null values respect the child generator's constraints
+            try std.testing.expect(value.value.? >= 1 and value.value.? <= 100);
+        }
+
+        if (seen_null and seen_value) break;
+    }
+
+    // We should have seen both null and non-null values
+    try std.testing.expect(seen_null and seen_value);
+}
+
+test "optional shrinking works correctly" {
+    // Create a generator for optional integers
+    const optIntGenerator = gen(?i32, .{
+        .child_config = .{ .min = 1, .max = 100 },
+        .null_probability = 0.3,
+    });
+
+    var prng = std.Random.DefaultPrng.init(42);
+    const random = prng.random();
+
+    // Generate a non-null value
+    var value: Value(?i32) = undefined;
+    var found_non_null = false;
+
+    // Try to get a non-null value
+    for (0..100) |_| {
+        value = try optIntGenerator.generate(random, 10, std.testing.allocator);
+        if (value.value != null) {
+            found_non_null = true;
+            break;
+        }
+        value.deinit(std.testing.allocator);
+    }
+
+    if (found_non_null) {
+        defer value.deinit(std.testing.allocator);
+
+        const shrinks = try optIntGenerator.shrink(value.value, value.context, std.testing.allocator);
+        defer shrinks.deinit();
+
+        // Verify we have some shrink candidates
+        try std.testing.expect(shrinks.len() > 0);
+
+        // The first shrink should be null (simplest form)
+        try std.testing.expectEqual(@as(?i32, null), shrinks.values[0].value);
+    } else {
+        // If we couldn't generate a non-null value after 100 tries, something is wrong
+        try std.testing.expect(false);
+    }
+}
+
+test "vector generator produces vectors within range" {
+    // Generate @Vector(4, i32) vectors
+    const vectorGenerator = gen(@Vector(4, i32), .{
+        .child_config = .{ .min = -10, .max = 10 },
+    });
+
+    var prng = std.Random.DefaultPrng.init(42);
+    const random = prng.random();
+
+    // Generate a few vectors and check their values
+    for (0..10) |_| {
+        const vector = try vectorGenerator.generate(random, 10, std.testing.allocator);
+        defer vector.deinit(std.testing.allocator);
+
+        // Check each element is within bounds
+        for (0..4) |i| {
+            const value = vector.value[i];
+            try std.testing.expect(value >= -10 and value <= 10);
+        }
+    }
+}
+
+test "tuple generator combines multiple generators" {
+    // Create generators for different types
+    const intGenerator = gen(i32, .{ .min = 1, .max = 100 });
+    const boolGenerator = gen(bool, .{});
+    const floatGenerator = gen(f64, .{ .min = -10.0, .max = 10.0 });
+
+    // Combine them into a tuple generator
+    const tupleGenerator = tuple(.{ intGenerator, boolGenerator, floatGenerator });
+
+    var prng = std.Random.DefaultPrng.init(42);
+    const random = prng.random();
+
+    // Generate tuples and check their components
+    for (0..10) |_| {
+        const value = try tupleGenerator.generate(random, 10, std.testing.allocator);
+        defer value.deinit(std.testing.allocator);
+
+        // Check that each component has the correct type and constraints
+        const int_value: i32 = value.value[0];
+        const bool_value: bool = value.value[1];
+        const float_value: f64 = value.value[2];
+
+        try std.testing.expect(int_value >= 1 and int_value <= 100);
+        try std.testing.expect(bool_value == true or bool_value == false);
+
+        // Skip NaN and infinity checks for float
+        if (!std.math.isNan(float_value) and !std.math.isInf(float_value)) {
+            try std.testing.expect(float_value >= -10.0 and float_value <= 10.0);
+        }
+    }
+}
+
+test "oneOf selects from multiple generators" {
+    // Create several integer generators with different ranges
+    const smallIntGen = gen(i32, .{ .min = 1, .max = 10 });
+    const mediumIntGen = gen(i32, .{ .min = 11, .max = 100 });
+    const largeIntGen = gen(i32, .{ .min = 101, .max = 1000 });
+
+    // Combine them with oneOf
+    const combinedGen = oneOf(.{ smallIntGen, mediumIntGen, largeIntGen }, null);
+
+    var prng = std.Random.DefaultPrng.init(42);
+    const random = prng.random();
+
+    // Track which ranges we've seen
+    var seen_small = false;
+    var seen_medium = false;
+    var seen_large = false;
+
+    // Generate many values to ensure we get all ranges
+    for (0..1000) |_| {
+        const value = try combinedGen.generate(random, 10, std.testing.allocator);
+        defer value.deinit(std.testing.allocator);
+
+        if (value.value >= 1 and value.value <= 10) seen_small = true;
+        if (value.value >= 11 and value.value <= 100) seen_medium = true;
+        if (value.value >= 101 and value.value <= 1000) seen_large = true;
+
+        if (seen_small and seen_medium and seen_large) break;
+    }
+
+    // We should have seen all three ranges
+    try std.testing.expect(seen_small);
+    try std.testing.expect(seen_medium);
+    try std.testing.expect(seen_large);
+}
+
+test "oneOf respects weights" {
+    // Create two boolean generators - one that always generates true, one that always generates false
+    const trueGen = gen(bool, .{}).map(bool, struct {
+        fn alwaysTrue(_: bool) bool {
+            return true;
+        }
+    }.alwaysTrue, null);
+
+    const falseGen = gen(bool, .{}).map(bool, struct {
+        fn alwaysFalse(_: bool) bool {
+            return false;
+        }
+    }.alwaysFalse, null);
+
+    // Create a heavily weighted generator that should mostly produce true
+    const weights = [_]f32{ 0.9, 0.1 }; // 90% true, 10% false
+    const weightedGen = oneOf(.{ trueGen, falseGen }, &weights);
+
+    var prng = std.Random.DefaultPrng.init(42);
+    const random = prng.random();
+
+    // Count true/false values
+    var true_count: usize = 0;
+    var false_count: usize = 0;
+    const iterations = 1000;
+
+    for (0..iterations) |_| {
+        const value = try weightedGen.generate(random, 10, std.testing.allocator);
+        defer value.deinit(std.testing.allocator);
+
+        if (value.value) true_count += 1 else false_count += 1;
+    }
+
+    // We should get roughly 90% true values
+    const true_ratio = @as(f32, @floatFromInt(true_count)) / @as(f32, @floatFromInt(iterations));
+    try std.testing.expect(true_ratio > 0.8); // Allow some statistical variation
 }
 
 test "bool generator produces both true and false" {
