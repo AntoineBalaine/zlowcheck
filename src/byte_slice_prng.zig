@@ -33,35 +33,35 @@ pub fn bytes(self: *@This(), buf: []u8) !void {
     }
 }
 
-pub fn boolean(self: *@This()) !bool {
+pub fn boolean(self: *@This(), reader: anytype) !bool {
     var bits_read: u16 = undefined;
-    const result = try self.bit_reader.readBits(u1, 1, &bits_read, self.fixed_buffer.reader());
+    const result = try self.bit_reader.readBits(u1, 1, &bits_read, reader);
     if (bits_read == 0) return error.OutOfEntropy;
     return result == 1;
 }
 
-pub fn enumValue(self: *@This(), comptime EnumType: type) !EnumType {
+pub fn enumValue(self: *@This(), comptime EnumType: type, reader: anytype) !EnumType {
     // Get all enum values at comptime
     const values = comptime std.enums.values(EnumType);
     // Get a random index at runtime
-    const random_index = try self.uintLessThan(usize, values.len);
+    const random_index = try self.uintLessThan(usize, values.len, reader);
     // Return the enum value at that index
     return values[random_index];
 }
-pub fn enumValueWithIndex(self: *@This(), comptime EnumType: type, comptime Index: type) !EnumType {
+pub fn enumValueWithIndex(self: *@This(), comptime EnumType: type, comptime Index: type, reader: anytype) !EnumType {
     // Get all enum values at comptime
     const values = comptime std.enums.values(EnumType);
     // Get a random index at runtime with the specified index type
-    const random_index = try self.uintLessThan(Index, values.len);
+    const random_index = try self.uintLessThan(Index, values.len, reader);
     // Return the enum value at that index
     return values[@intCast(random_index)];
 }
-pub fn int(self: *@This(), comptime T: type) !T {
+pub fn int(self: *@This(), comptime T: type, reader: anytype) !T {
     const bits = @typeInfo(T).int.bits;
     const UnsignedT = std.meta.Int(.unsigned, bits);
 
     var bits_read: u16 = undefined;
-    const result = try self.bit_reader.readBits(UnsignedT, bits, &bits_read, self.fixed_buffer.reader());
+    const result = try self.bit_reader.readBits(UnsignedT, bits, &bits_read, reader);
     if (bits_read < bits) return error.OutOfEntropy;
 
     if (@typeInfo(T).int.signedness == .signed) {
@@ -70,14 +70,14 @@ pub fn int(self: *@This(), comptime T: type) !T {
         return result;
     }
 }
-pub fn uintLessThanBiased(self: *@This(), comptime T: type, less_than: T) !T {
+pub fn uintLessThanBiased(self: *@This(), comptime T: type, less_than: T, reader: anytype) !T {
     if (less_than <= 1) return 0;
 
     // Get a random number and take the remainder when divided by less_than
-    const random = try self.int(T);
+    const random = try self.int(T, reader);
     return @rem(random, less_than);
 }
-pub fn uintLessThan(self: *@This(), comptime T: type, less_than: T) !T {
+pub fn uintLessThan(self: *@This(), comptime T: type, less_than: T, reader: anytype) !T {
     if (less_than <= 1) return 0;
 
     // Calculate number of bits needed to represent less_than-1
@@ -88,73 +88,73 @@ pub fn uintLessThan(self: *@This(), comptime T: type, less_than: T) !T {
     // Keep generating random numbers until we get one less than less_than
     while (true) {
         var bits_read: u16 = undefined;
-        const result = try self.bit_reader.readBits(T, @intCast(bits_needed), &bits_read, self.fixed_buffer.reader());
+        const result = try self.bit_reader.readBits(T, @intCast(bits_needed), &bits_read, reader);
         if (bits_read < bits_needed) return error.OutOfEntropy;
 
         const masked_result = result & mask;
         if (masked_result < less_than) return masked_result;
     }
 }
-pub fn uintAtMostBiased(self: *@This(), comptime T: type, at_most: T) !T {
-    return try self.uintLessThanBiased(T, at_most + 1);
+pub fn uintAtMostBiased(self: *@This(), comptime T: type, at_most: T, reader: anytype) !T {
+    return try self.uintLessThanBiased(T, at_most + 1, reader);
 }
-pub fn uintAtMost(self: *@This(), comptime T: type, at_most: T) !T {
-    return try self.uintLessThan(T, at_most + 1);
+pub fn uintAtMost(self: *@This(), comptime T: type, at_most: T, reader: anytype) !T {
+    return try self.uintLessThan(T, at_most + 1, reader);
 }
-pub fn intRangeLessThanBiased(self: *@This(), comptime T: type, at_least: T, less_than: T) !T {
+pub fn intRangeLessThanBiased(self: *@This(), comptime T: type, at_least: T, less_than: T, reader: anytype) !T {
     if (at_least >= less_than) return at_least;
     const range = less_than - at_least;
-    const result = try self.uintLessThanBiased(T, range);
+    const result = try self.uintLessThanBiased(T, range, reader);
     return at_least + result;
 }
-pub fn intRangeLessThan(self: *@This(), comptime T: type, at_least: T, less_than: T) !T {
+pub fn intRangeLessThan(self: *@This(), comptime T: type, at_least: T, less_than: T, reader: anytype) !T {
     if (at_least >= less_than) return at_least;
     const range = less_than - at_least;
 
     // Use unsigned version for the range calculation if T is signed
     if (@typeInfo(T).int.signedness == .signed) {
         const UT = std.meta.Int(.unsigned, @typeInfo(T).int.bits);
-        const unsigned_result = try self.uintLessThan(UT, @intCast(range));
+        const unsigned_result = try self.uintLessThan(UT, @intCast(range), reader);
         return at_least + @as(T, @intCast(unsigned_result));
     } else {
-        const result = try self.uintLessThan(T, range);
+        const result = try self.uintLessThan(T, range, reader);
         return at_least + result;
     }
 }
-pub fn intRangeAtMostBiased(self: *@This(), comptime T: type, at_least: T, at_most: T) !T {
-    return try self.intRangeLessThanBiased(T, at_least, at_most + 1);
+pub fn intRangeAtMostBiased(self: *@This(), comptime T: type, at_least: T, at_most: T, reader: anytype) !T {
+    return try self.intRangeLessThanBiased(T, at_least, at_most + 1, reader);
 }
-pub fn intRangeAtMost(self: *@This(), comptime T: type, at_least: T, at_most: T) !T {
-    return try self.intRangeLessThan(T, at_least, at_most + 1);
+pub fn intRangeAtMost(self: *@This(), comptime T: type, at_least: T, at_most: T, reader: anytype) !T {
+    return try self.intRangeLessThan(T, at_least, at_most + 1, reader);
 }
-pub fn float(self: *@This(), comptime T: type) !T {
+pub fn float(self: *@This(), comptime T: type, reader: anytype) !T {
     switch (T) {
         f16 => {
-            const random = try self.int(u16);
+            const random = try self.int(u16, reader);
             return @bitCast(random);
         },
         f32 => {
-            const random = try self.int(u32);
+            const random = try self.int(u32, reader);
             return @bitCast(random);
         },
         f64 => {
-            const random = try self.int(u64);
+            const random = try self.int(u64, reader);
             return @bitCast(random);
         },
         else => @compileError("Unsupported float type: " ++ @typeName(T)),
     }
 }
-pub fn floatNorm(self: *@This(), comptime T: type) !T {
+pub fn floatNorm(self: *@This(), comptime T: type, reader: anytype) !T {
     // Generate a float in the range [0, 1)
     switch (T) {
         f32 => {
-            const random = try self.int(u32);
+            const random = try self.int(u32, reader);
             // Use the first 23 bits for the mantissa, discard the rest
             const result = @as(f32, @floatFromInt(random & 0x7FFFFF)) / @as(f32, @floatFromInt(0x800000));
             return result;
         },
         f64 => {
-            const random = try self.int(u64);
+            const random = try self.int(u64, reader);
             // Use the first 52 bits for the mantissa, discard the rest
             const result = @as(f64, @floatFromInt(random & 0xFFFFFFFFFFFFF)) / @as(f64, @floatFromInt(0x10000000000000));
             return result;
@@ -162,30 +162,30 @@ pub fn floatNorm(self: *@This(), comptime T: type) !T {
         else => @compileError("Unsupported float type: " ++ @typeName(T)),
     }
 }
-pub fn floatExp(self: *@This(), comptime T: type) !T {
+pub fn floatExp(self: *@This(), comptime T: type, reader: anytype) !T {
     // Generate a float with an exponential distribution
-    const norm = try self.floatNorm(T);
+    const norm = try self.floatNorm(T, reader);
     return -@log(norm);
 }
-pub fn shuffle(self: *@This(), comptime T: type, buf: []T) !void {
+pub fn shuffle(self: *@This(), comptime T: type, buf: []T, reader: anytype) !void {
     // Fisher-Yates shuffle
     var i: usize = buf.len;
     while (i > 1) {
         i -= 1;
-        const j = try self.uintLessThan(usize, i + 1);
+        const j = try self.uintLessThan(usize, i + 1, reader);
         std.mem.swap(T, &buf[i], &buf[j]);
     }
 }
-pub fn shuffleWithIndex(self: *@This(), comptime T: type, buf: []T, comptime Index: type) !void {
+pub fn shuffleWithIndex(self: *@This(), comptime T: type, buf: []T, comptime Index: type, reader: anytype) !void {
     // Fisher-Yates shuffle with custom index type
     var i: Index = @intCast(buf.len);
     while (i > 1) {
         i -= 1;
-        const j = try self.uintLessThan(Index, i + 1);
+        const j = try self.uintLessThan(Index, i + 1, reader);
         std.mem.swap(T, &buf[@intCast(i)], &buf[@intCast(j)]);
     }
 }
-pub fn weightedIndex(self: *@This(), comptime T: type, proportions: []const T) !usize {
+pub fn weightedIndex(self: *@This(), comptime T: type, proportions: []const T, reader: anytype) !usize {
     if (proportions.len == 0) return error.OutOfEntropy;
 
     // Calculate the sum of all proportions
@@ -195,7 +195,7 @@ pub fn weightedIndex(self: *@This(), comptime T: type, proportions: []const T) !
     }
 
     // Generate a random value between 0 and sum
-    const rand_val = try self.intRangeLessThan(T, 0, sum);
+    const rand_val = try self.intRangeLessThan(T, 0, sum, reader);
 
     // Find the index corresponding to the random value
     var partial_sum: T = 0;
