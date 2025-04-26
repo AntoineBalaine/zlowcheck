@@ -8,7 +8,7 @@ const BitReader = @import("bitreader_std.zig");
 const FinitePrng = @This();
 bytes_: []const u8,
 fixed_buffer: std.io.FixedBufferStream([]const u8),
-bit_reader: BitReader.BitReader(.little),
+bit_reader: BitReader.BitReader(.big),
 
 pub const FinitePrngErr = error{
     OutOfEntropy,
@@ -18,7 +18,7 @@ pub fn init(bytes_: []const u8) FinitePrng {
     return .{
         .bytes_ = bytes_,
         .fixed_buffer = std.io.fixedBufferStream(bytes_),
-        .bit_reader = BitReader.bitReader(.little),
+        .bit_reader = BitReader.bitReader(.big),
     };
 }
 

@@ -30,7 +30,7 @@ test "FinitePrng bytes" {
 
 test "FinitePrng boolean" {
     // Test with known values - use a slice instead of an array
-    const bytes = &[_]u8{ 0x01, 0x00 }; // 00000001 00000000
+    const bytes = &[_]u8{ 0x80, 0x00 }; // 10000000 00000000 in big endian
     var prng = FinitePrng.init(bytes);
     const reader = prng.fixed_buffer.reader();
     // First bit is 1
