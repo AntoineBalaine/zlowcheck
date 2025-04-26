@@ -4,13 +4,16 @@ const Generator = generator.Generator;
 const gen = generator.gen;
 const tuple = generator.tuple;
 const oneOf = generator.oneOf;
+const FinitePrng = @import("byte_slice_prng.zig");
 
 test "int generator produces values within range" {
     // Create a generator for integers between 10 and 20
     const intGenerator = gen(i32, .{ .min = 10, .max = 20 });
 
-    var prng = std.Random.DefaultPrng.init(42); // Fixed seed for reproducibility
-    const random = prng.random();
+    // Create a fixed set of bytes for reproducibility
+    const bytes = [_]u8{42} ** 1024; // 1KB of data with value 42
+    var finite_prng = FinitePrng.init(&bytes);
+    const random = finite_prng.random();
 
     // Generate 100 values and check they're all within range
     for (0..100) |_| {
@@ -23,8 +26,9 @@ test "int generator produces boundary values" {
     // Create a generator for integers
     const intGenerator = gen(i32, .{ .min = -100, .max = 100 });
 
-    var prng = std.Random.DefaultPrng.init(42);
-    const random = prng.random();
+    const bytes = [_]u8{42} ** 1024;
+    var finite_prng = FinitePrng.init(&bytes);
+    const random = finite_prng.random();
 
     // Set to track boundary values we've seen
     var seen_boundaries = std.AutoHashMap(i32, void).init(std.testing.allocator);
@@ -63,8 +67,9 @@ test "float generator produces values within range" {
     // Create a generator for floats between -10.0 and 10.0
     const floatGenerator = gen(f64, .{ .min = -10.0, .max = 10.0 });
 
-    var prng = std.Random.DefaultPrng.init(42);
-    const random = prng.random();
+    const bytes = [_]u8{42} ** 1024;
+    var finite_prng = FinitePrng.init(&bytes);
+    const random = finite_prng.random();
 
     // Generate 100 values and check they're all within range
     for (0..100) |_| {
@@ -80,8 +85,9 @@ test "float generator produces values within range" {
 test "float generator produces special values" {
     const floatGenerator = gen(f64, .{});
 
-    var prng = std.Random.DefaultPrng.init(42);
-    const random = prng.random();
+    const bytes = [_]u8{42} ** 1024;
+    var finite_prng = FinitePrng.init(&bytes);
+    const random = finite_prng.random();
 
     // Track special values we've seen
     var seen_zero = false;
@@ -120,8 +126,9 @@ test "float generator produces special values" {
 test "bool generator produces both true and false" {
     const boolGenerator = gen(bool, .{});
 
-    var prng = std.Random.DefaultPrng.init(42);
-    const random = prng.random();
+    const bytes = [_]u8{ 42, 0 } ** 512; // Alternating bytes to ensure both true and false
+    var finite_prng = FinitePrng.init(&bytes);
+    const random = finite_prng.random();
 
     var seen_true = false;
     var seen_false = false;
@@ -150,8 +157,9 @@ test "map transforms values correctly" {
         }
     }.double);
 
-    var prng = std.Random.DefaultPrng.init(42);
-    const random = prng.random();
+    const bytes = [_]u8{42} ** 1024;
+    var finite_prng = FinitePrng.init(&bytes);
+    const random = finite_prng.random();
 
     // Generate values and check they're all doubled
     for (0..100) |_| {
@@ -171,8 +179,9 @@ test "filter constrains values correctly" {
         }
     }.isPositive);
 
-    var prng = std.Random.DefaultPrng.init(42);
-    const random = prng.random();
+    const bytes = [_]u8{42} ** 1024;
+    var finite_prng = FinitePrng.init(&bytes);
+    const random = finite_prng.random();
 
     // Generate values and check they're all positive
     for (0..100) |_| {
@@ -187,8 +196,9 @@ test "array generator produces arrays of the correct length" {
         .child_config = .{ .min = -10, .max = 10 },
     });
 
-    var prng = std.Random.DefaultPrng.init(42);
-    const random = prng.random();
+    const bytes = [_]u8{42} ** 1024;
+    var finite_prng = FinitePrng.init(&bytes);
+    const random = finite_prng.random();
 
     // Generate a few arrays and check their length
     for (0..10) |_| {
@@ -203,8 +213,9 @@ test "array generator respects element bounds" {
         .child_config = .{ .min = 5, .max = 15 },
     });
 
-    var prng = std.Random.DefaultPrng.init(42);
-    const random = prng.random();
+    const bytes = [_]u8{42} ** 1024;
+    var finite_prng = FinitePrng.init(&bytes);
+    const random = finite_prng.random();
 
     // Generate arrays and check all elements are within bounds
     for (0..10) |_| {
@@ -224,8 +235,9 @@ test "nested array generator works correctly" {
         },
     });
 
-    var prng = std.Random.DefaultPrng.init(42);
-    const random = prng.random();
+    const bytes = [_]u8{42} ** 1024;
+    var finite_prng = FinitePrng.init(&bytes);
+    const random = finite_prng.random();
 
     // Generate a nested array and check its structure and values
     const nested_array = try nestedArrayGenerator.generate(random, 10, std.testing.allocator);
@@ -249,8 +261,9 @@ test "array of booleans generator works correctly" {
         .child_config = .{},
     });
 
-    var prng = std.Random.DefaultPrng.init(42);
-    const random = prng.random();
+    const bytes = [_]u8{ 42, 0 } ** 512; // Alternating bytes for variety
+    var finite_prng = FinitePrng.init(&bytes);
+    const random = finite_prng.random();
 
     // Generate several arrays to ensure we get both true and false values
     var seen_true = false;
@@ -288,8 +301,9 @@ test "array generator with map function" {
         }
     }.doubleElements);
 
-    var prng = std.Random.DefaultPrng.init(42);
-    const random = prng.random();
+    const bytes = [_]u8{42} ** 1024;
+    var finite_prng = FinitePrng.init(&bytes);
+    const random = finite_prng.random();
 
     // Generate arrays and check elements are doubled
     for (0..10) |_| {
@@ -310,8 +324,9 @@ test "slice generator produces slices of correct length range" {
         .child_config = .{ .min = -10, .max = 10 },
     });
 
-    var prng = std.Random.DefaultPrng.init(42);
-    const random = prng.random();
+    const bytes = [_]u8{42} ** 1024;
+    var finite_prng = FinitePrng.init(&bytes);
+    const random = finite_prng.random();
 
     // Generate slices and check their length is within range
     for (0..10) |_| {
@@ -330,8 +345,9 @@ test "slice generator respects element bounds" {
         .child_config = .{ .min = 5, .max = 15 },
     });
 
-    var prng = std.Random.DefaultPrng.init(42);
-    const random = prng.random();
+    const bytes = [_]u8{42} ** 1024;
+    var finite_prng = FinitePrng.init(&bytes);
+    const random = finite_prng.random();
 
     // Generate slices and check all elements are within bounds
     for (0..10) |_| {
@@ -363,8 +379,9 @@ test "slice generator with map function" {
         }
     }.doubleElements);
 
-    var prng = std.Random.DefaultPrng.init(42);
-    const random = prng.random();
+    const bytes = [_]u8{42} ** 1024;
+    var finite_prng = FinitePrng.init(&bytes);
+    const random = finite_prng.random();
 
     // Generate slices and check elements are doubled
     for (0..5) |_| {
@@ -390,8 +407,9 @@ test "nested slice generator works correctly" {
         },
     });
 
-    var prng = std.Random.DefaultPrng.init(42);
-    const random = prng.random();
+    const bytes = [_]u8{42} ** 1024;
+    var finite_prng = FinitePrng.init(&bytes);
+    const random = finite_prng.random();
 
     // Generate a nested slice and check its structure and values
     const nested_slice = try nestedSliceGenerator.generate(random, 10, std.testing.allocator);
@@ -427,8 +445,9 @@ test "struct generator works correctly" {
         .y = .{ .min = -5, .max = 5 },
     });
 
-    var prng = std.Random.DefaultPrng.init(42);
-    const random = prng.random();
+    const bytes = [_]u8{42} ** 1024;
+    var finite_prng = FinitePrng.init(&bytes);
+    const random = finite_prng.random();
 
     // Generate points and check field bounds
     for (0..10) |_| {
@@ -462,8 +481,9 @@ test "nested struct generator works correctly" {
         },
     });
 
-    var prng = std.Random.DefaultPrng.init(42);
-    const random = prng.random();
+    const bytes = [_]u8{42} ** 1024;
+    var finite_prng = FinitePrng.init(&bytes);
+    const random = finite_prng.random();
 
     // Generate rectangles and check field bounds
     for (0..10) |_| {
@@ -491,8 +511,9 @@ test "enum generator produces valid enum values" {
     // Create a generator for the Color enum
     const colorGenerator = gen(Color, .{});
 
-    var prng = std.Random.DefaultPrng.init(42);
-    const random = prng.random();
+    const bytes = [_]u8{ 0, 1, 2, 3, 4, 5 } ** 200; // Variety of values to hit all enum cases
+    var finite_prng = FinitePrng.init(&bytes);
+    const random = finite_prng.random();
 
     // Track which enum values we've seen
     var seen = [_]bool{false} ** 5;
@@ -531,8 +552,9 @@ test "enum generator with non-zero values" {
     // Create a generator for the Status enum
     const statusGenerator = gen(Status, .{});
 
-    var prng = std.Random.DefaultPrng.init(42);
-    const random = prng.random();
+    const bytes = [_]u8{ 0, 1, 2, 3, 4, 5 } ** 200; // Variety of values to hit all enum cases
+    var finite_prng = FinitePrng.init(&bytes);
+    const random = finite_prng.random();
 
     // Track which enum values we've seen
     var seen = [_]bool{false} ** 4;
@@ -575,8 +597,9 @@ test "optional generator produces both null and values" {
         .null_probability = 0.5, // 50% chance of null
     });
 
-    var prng = std.Random.DefaultPrng.init(42);
-    const random = prng.random();
+    const bytes = [_]u8{ 0, 255 } ** 512; // Alternating values to ensure both null and non-null
+    var finite_prng = FinitePrng.init(&bytes);
+    const random = finite_prng.random();
 
     var seen_null = false;
     var seen_value = false;
@@ -612,8 +635,10 @@ test "optional generator with custom null probability" {
         .null_probability = 0.9, // 90% chance of null
     });
 
-    var prng = std.Random.DefaultPrng.init(42);
-    const random = prng.random();
+    // Create bytes with a pattern that will produce different results for the two generators
+    const bytes = [_]u8{ 10, 20, 30, 40, 50, 60, 70, 80, 90, 100 } ** 100;
+    var finite_prng = FinitePrng.init(&bytes);
+    const random = finite_prng.random();
 
     // Count nulls for each generator
     var rare_null_count: usize = 0;
@@ -654,8 +679,9 @@ test "single pointer generator works correctly" {
         },
     });
 
-    var prng = std.Random.DefaultPrng.init(42);
-    const random = prng.random();
+    const bytes = [_]u8{42} ** 1024;
+    var finite_prng = FinitePrng.init(&bytes);
+    const random = finite_prng.random();
 
     // Generate a pointer to a Point and check its values
     const point_ptr = try pointPtrGenerator.generate(random, 10, std.testing.allocator);
@@ -671,8 +697,9 @@ test "single pointer to primitive type" {
         .child_config = .{ .min = -50, .max = 50 },
     });
 
-    var prng = std.Random.DefaultPrng.init(42);
-    const random = prng.random();
+    const bytes = [_]u8{42} ** 1024;
+    var finite_prng = FinitePrng.init(&bytes);
+    const random = finite_prng.random();
 
     // Generate several pointers and check their values
     for (0..10) |_| {
@@ -691,8 +718,9 @@ test "pointer to array" {
         },
     });
 
-    var prng = std.Random.DefaultPrng.init(42);
-    const random = prng.random();
+    const bytes = [_]u8{ 42, 0 } ** 512; // Alternating bytes for variety
+    var finite_prng = FinitePrng.init(&bytes);
+    const random = finite_prng.random();
 
     // Generate a pointer to an array and check its values
     const array_ptr = try arrayPtrGenerator.generate(random, 10, std.testing.allocator);
@@ -720,8 +748,9 @@ test "untagged union generator produces valid values" {
         .boolean = .{},
     });
 
-    var prng = std.Random.DefaultPrng.init(42);
-    const random = prng.random();
+    const bytes = [_]u8{ 0, 1, 2, 3, 4, 5 } ** 200; // Variety of values to hit all union cases
+    var finite_prng = FinitePrng.init(&bytes);
+    const random = finite_prng.random();
 
     // Track which union variants we've seen
     var seen_int = false;
@@ -780,8 +809,9 @@ test "tagged union generator works correctly" {
         },
     });
 
-    var prng = std.Random.DefaultPrng.init(42);
-    const random = prng.random();
+    const bytes = [_]u8{ 0, 1, 2, 3, 4, 5 } ** 200; // Variety of values to hit all union cases
+    var finite_prng = FinitePrng.init(&bytes);
+    const random = finite_prng.random();
 
     // Track which union variants we've seen
     var seen_circle = false;
@@ -839,8 +869,9 @@ test "union with slice fields" {
         },
     });
 
-    var prng = std.Random.DefaultPrng.init(42);
-    const random = prng.random();
+    const bytes = [_]u8{ 0, 1, 2, 3, 4, 5 } ** 200; // Variety of values
+    var finite_prng = FinitePrng.init(&bytes);
+    const random = finite_prng.random();
 
     // Generate a few values and check their constraints
     for (0..10) |_| {
@@ -869,8 +900,9 @@ test "vector generator produces vectors within range" {
         .child_config = .{ .min = -10, .max = 10 },
     });
 
-    var prng = std.Random.DefaultPrng.init(42);
-    const random = prng.random();
+    const bytes = [_]u8{42} ** 1024;
+    var finite_prng = FinitePrng.init(&bytes);
+    const random = finite_prng.random();
 
     // Generate a few vectors and check their values
     for (0..10) |_| {
@@ -890,8 +922,9 @@ test "vector generator with boolean elements" {
         .child_config = .{},
     });
 
-    var prng = std.Random.DefaultPrng.init(42);
-    const random = prng.random();
+    const bytes = [_]u8{ 42, 0 } ** 512; // Alternating bytes for variety
+    var finite_prng = FinitePrng.init(&bytes);
+    const random = finite_prng.random();
 
     // Generate several vectors to ensure we get both true and false values
     var seen_true = false;
@@ -926,8 +959,9 @@ test "vector generator with map function" {
         }
     }.scaleElements);
 
-    var prng = std.Random.DefaultPrng.init(42);
-    const random = prng.random();
+    const bytes = [_]u8{42} ** 1024;
+    var finite_prng = FinitePrng.init(&bytes);
+    const random = finite_prng.random();
 
     // Generate vectors and check elements are scaled
     for (0..10) |_| {
@@ -951,8 +985,9 @@ test "tuple generator combines multiple generators" {
     // Combine them into a tuple generator
     const tupleGenerator = tuple(.{ intGenerator, boolGenerator, floatGenerator });
 
-    var prng = std.Random.DefaultPrng.init(42);
-    const random = prng.random();
+    const bytes = [_]u8{42} ** 1024;
+    var finite_prng = FinitePrng.init(&bytes);
+    const random = finite_prng.random();
 
     // Generate tuples and check their components
     for (0..10) |_| {
@@ -988,8 +1023,9 @@ test "tuple generator with nested tuples" {
     // Create a generator that combines a bool with a pair
     const nestedTupleGenerator = tuple(.{ gen(bool, .{}), pairGenerator });
 
-    var prng = std.Random.DefaultPrng.init(42);
-    const random = prng.random();
+    const bytes = [_]u8{42} ** 1024;
+    var finite_prng = FinitePrng.init(&bytes);
+    const random = finite_prng.random();
 
     // Generate nested tuples and check their components
     for (0..5) |_| {
@@ -1017,8 +1053,9 @@ test "tuple generator for property testing" {
         gen(i32, .{ .min = -100, .max = 100 }),
     });
 
-    var prng = std.Random.DefaultPrng.init(42);
-    const random = prng.random();
+    const bytes = [_]u8{42} ** 1024;
+    var finite_prng = FinitePrng.init(&bytes);
+    const random = finite_prng.random();
 
     // Test the commutative property of addition
     for (0..100) |_| {
@@ -1040,8 +1077,9 @@ test "oneOf selects from multiple generators" {
     // Combine them with oneOf
     const combinedGen = oneOf(.{ smallIntGen, mediumIntGen, largeIntGen }, null);
 
-    var prng = std.Random.DefaultPrng.init(42);
-    const random = prng.random();
+    const bytes = [_]u8{ 0, 1, 2, 3, 4, 5 } ** 200; // Variety of values to hit all generators
+    var finite_prng = FinitePrng.init(&bytes);
+    const random = finite_prng.random();
 
     // Track which ranges we've seen
     var seen_small = false;
@@ -1083,8 +1121,9 @@ test "oneOf respects weights" {
     const weights = [_]f32{ 0.9, 0.1 }; // 90% true, 10% false
     const weightedGen = oneOf(.{ trueGen, falseGen }, &weights);
 
-    var prng = std.Random.DefaultPrng.init(42);
-    const random = prng.random();
+    const bytes = [_]u8{ 10, 20, 30, 40, 50, 60, 70, 80, 90, 100 } ** 100; // Values that will favor the first generator
+    var finite_prng = FinitePrng.init(&bytes);
+    const random = finite_prng.random();
 
     // Count true/false values
     var true_count: usize = 0;
@@ -1123,8 +1162,9 @@ test "oneOf with union generators" {
     // Combine them with oneOf
     const valueGen = oneOf(.{ intValueGen, floatValueGen }, null);
 
-    var prng = std.Random.DefaultPrng.init(42);
-    const random = prng.random();
+    const bytes = [_]u8{ 0, 1, 2, 3, 4, 5 } ** 200; // Variety of values to hit both variants
+    var finite_prng = FinitePrng.init(&bytes);
+    const random = finite_prng.random();
 
     // Track which variants we've seen
     var seen_int = false;
