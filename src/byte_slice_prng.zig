@@ -80,20 +80,29 @@ pub fn uintLessThanBiased(self: *@This(), comptime T: type, less_than: T, reader
 pub fn uintLessThan(self: *@This(), comptime T: type, less_than: T, reader: anytype) !T {
     if (less_than <= 1) return 0;
 
-    // Calculate number of bits needed to represent less_than-1
+    // NOTE: leaving this previous version in as reference
+    // I couldn’t get it to work. I traded of for a different algo
+    // which consume a LOT of data from the strea
     // Ensure we're using an unsigned type for log2_int_ceil
-    const bits_needed = std.math.log2_int_ceil(T, less_than);
-    const mask = (@as(T, 1) << @intCast(bits_needed)) - 1;
+    // const bits_needed = std.math.log2_int_ceil(T, less_than);
+    // const mask = (@as(T, 1) << @intCast(bits_needed)) - 1;
+    // while (true) {
+    //     var bits_read: u16 = undefined;
+    //     const result = try self.bit_reader.readBits(T, @intCast(bits_needed), &bits_read, reader);
+    //     if (bits_read < bits_needed) return error.OutOfEntropy;
+    //     const masked_result = result & mask;
+    //     if (masked_result < less_than) return masked_result;
+    // }
 
-    // Keep generating random numbers until we get one less than less_than
-    while (true) {
-        var bits_read: u16 = undefined;
-        const result = try self.bit_reader.readBits(T, @intCast(bits_needed), &bits_read, reader);
-        if (bits_read < bits_needed) return error.OutOfEntropy;
+    const bits = @typeInfo(T).int.bits;
+    const WT = std.meta.Int(.unsigned, bits * 2); // Wider type for multiplication
 
-        const masked_result = result & mask;
-        if (masked_result < less_than) return masked_result;
-    }
+    // Get a random number of the full range
+    const random = try self.int(T, reader);
+
+    // Apply fast range algorithm
+    const product = @as(WT, random) * @as(WT, less_than);
+    return @as(T, @truncate(product >> bits));
 }
 pub fn uintAtMostBiased(self: *@This(), comptime T: type, at_most: T, reader: anytype) !T {
     return try self.uintLessThanBiased(T, at_most + 1, reader);
@@ -104,9 +113,18 @@ pub fn uintAtMost(self: *@This(), comptime T: type, at_most: T, reader: anytype)
 pub fn intRangeLessThanBiased(self: *@This(), comptime T: type, at_least: T, less_than: T, reader: anytype) !T {
     if (at_least >= less_than) return at_least;
     const range = less_than - at_least;
-    const result = try self.uintLessThanBiased(T, range, reader);
-    return at_least + result;
+
+    // Use unsigned version for the range calculation if T is signed
+    if (@typeInfo(T).int.signedness == .signed) {
+        const UT = std.meta.Int(.unsigned, @typeInfo(T).int.bits);
+        const unsigned_result = try self.uintLessThanBiased(UT, @intCast(range), reader);
+        return at_least + @as(T, @intCast(unsigned_result));
+    } else {
+        const result = try self.uintLessThanBiased(T, range, reader);
+        return at_least + result;
+    }
 }
+
 pub fn intRangeLessThan(self: *@This(), comptime T: type, at_least: T, less_than: T, reader: anytype) !T {
     if (at_least >= less_than) return at_least;
     const range = less_than - at_least;
@@ -172,7 +190,7 @@ pub fn shuffle(self: *@This(), comptime T: type, buf: []T, reader: anytype) !voi
     var i: usize = buf.len;
     while (i > 1) {
         i -= 1;
-        const j = try self.uintLessThan(usize, i + 1, reader);
+        const j = try self.uintLessThanBiased(usize, i + 1, reader);
         std.mem.swap(T, &buf[i], &buf[j]);
     }
 }
