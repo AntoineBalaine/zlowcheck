@@ -1,5 +1,5 @@
 const std = @import("std");
-
+const FiniteRandom = @import("byte_slice_prng.zig").FiniteRandom;
 /// Core Generator type that produces random values of a specific type
 pub fn Generator(comptime T: type) type {
     return struct {
@@ -9,10 +9,10 @@ pub fn Generator(comptime T: type) type {
         pub const ValueType = T;
 
         /// Function that generates values
-        generateFn: fn (random: std.Random, size: usize, allocator: std.mem.Allocator) error{OutOfMemory}!T,
+        generateFn: fn (random: *FiniteRandom, size: usize, allocator: std.mem.Allocator) error{ OutOfMemory, OutOfEntropy }!T,
 
         /// Generate a value
-        pub fn generate(self: Self, random: std.Random, size: usize, allocator: std.mem.Allocator) !T {
+        pub fn generate(self: Self, random: *FiniteRandom, size: usize, allocator: std.mem.Allocator) error{ OutOfMemory, OutOfEntropy }!T {
             return self.generateFn(random, size, allocator);
         }
 
@@ -20,7 +20,7 @@ pub fn Generator(comptime T: type) type {
         pub fn map(self: Self, comptime U: type, mapFn: fn (T) U) Generator(U) {
             return Generator(U){
                 .generateFn = struct {
-                    fn generate(random: std.Random, size: usize, allocator: std.mem.Allocator) !U {
+                    fn generate(random: *FiniteRandom, size: usize, allocator: std.mem.Allocator) error{ OutOfMemory, OutOfEntropy }!U {
                         const value = try self.generate(random, size, allocator);
                         return mapFn(value);
                     }
@@ -32,7 +32,7 @@ pub fn Generator(comptime T: type) type {
         pub fn filter(self: Self, filterFn: fn (T) bool) Generator(T) {
             return Generator(T){
                 .generateFn = struct {
-                    fn generate(random: std.Random, size: usize, allocator: std.mem.Allocator) !T {
+                    fn generate(random: *FiniteRandom, size: usize, allocator: std.mem.Allocator) error{ OutOfMemory, OutOfEntropy }!T {
                         // Try a limited number of times to find a value that passes the filter
                         var attempts: usize = 0;
                         const max_attempts = 100;
@@ -105,31 +105,31 @@ fn intGen(comptime T: type, config: anytype) Generator(T) {
             const Min = min;
             const Max = max;
 
-            fn generate(random: std.Random, size: usize, allocator: std.mem.Allocator) !T {
+            fn generate(random: *FiniteRandom, size: usize, allocator: std.mem.Allocator) error{ OutOfMemory, OutOfEntropy }!T {
                 _ = size;
                 _ = allocator;
 
                 // Sometimes generate boundary values (20% of the time)
-                if (random.float(f32) < 0.2) {
+                if (try random.float(f32) < 0.2) {
                     var boundaries: [7]T = undefined;
                     const count = getIntBoundaryValues(T, Min, Max, &boundaries);
 
-                    const index = random.intRangeLessThan(usize, 0, count);
+                    const index = try random.intRangeLessThan(usize, 0, count);
                     return boundaries[index];
                 }
 
                 if (Max == std.math.maxInt(T)) {
                     // Special case for maximum value to avoid overflow
-                    return random.intRangeAtMost(T, Min, Max);
+                    return try random.intRangeAtMost(T, Min, Max);
                 } else {
-                    return random.intRangeLessThan(T, Min, Max + 1);
+                    return try random.intRangeLessThan(T, Min, Max + 1);
                 }
             }
         }.generate,
     };
 }
 
-// /// Generate floats
+// Generate floats
 fn floatGen(comptime T: type, config: anytype) Generator(T) {
     const min = if (@hasField(@TypeOf(config), "min")) config.min else -100.0;
     const max = if (@hasField(@TypeOf(config), "max")) config.max else 100.0;
@@ -138,36 +138,36 @@ fn floatGen(comptime T: type, config: anytype) Generator(T) {
         .generateFn = struct {
             const Min = min;
             const Max = max;
-            fn generate(random: std.Random, size: usize, allocator: std.mem.Allocator) !T {
+            fn generate(random: *FiniteRandom, size: usize, allocator: std.mem.Allocator) error{ OutOfMemory, OutOfEntropy }!T {
                 _ = size;
                 _ = allocator;
 
                 // Sometimes generate special values (20% of the time)
-                if (random.float(f32) < 0.2) {
+                if ((try random.floatNorm(f32)) < 0.2) {
                     var special_values: [8]T = undefined;
                     const count = getFloatSpecialValues(T, Min, Max, &special_values);
 
-                    const index = random.intRangeLessThan(usize, 0, count);
+                    const index = try random.uintLessThan(usize, count);
                     return special_values[index];
                 }
 
                 // Otherwise generate a random value in the range
-                return Min + (Max - Min) * random.float(T);
+                return Min + (Max - Min) * (try random.floatNorm(T));
             }
         }.generate,
     };
 }
 //
-// /// Generate booleans
+// Generate booleans
 fn boolGen(config: anytype) Generator(bool) {
     _ = config; // Unused for now, could add bias in the future
 
     return Generator(bool){
         .generateFn = struct {
-            fn generate(random: std.Random, size: usize, allocator: std.mem.Allocator) !bool {
+            fn generate(random: *FiniteRandom, size: usize, allocator: std.mem.Allocator) error{ OutOfMemory, OutOfEntropy }!bool {
                 _ = size;
                 _ = allocator;
-                return random.boolean();
+                return try random.boolean();
             }
         }.generate,
     };
@@ -178,7 +178,7 @@ fn arrayGen(comptime E: type, comptime len: usize, child_gen: Generator(E)) Gene
     return Generator([len]E){
         .generateFn = struct {
             const ChildGen = child_gen;
-            fn generate(random: std.Random, size: usize, allocator: std.mem.Allocator) ![len]E {
+            fn generate(random: *FiniteRandom, size: usize, allocator: std.mem.Allocator) error{ OutOfMemory, OutOfEntropy }![len]E {
                 var result: [len]E = undefined;
                 for (&result) |*elem| {
                     elem.* = try ChildGen.generate(random, size, allocator);
@@ -200,8 +200,8 @@ fn sliceGen(comptime E: type, child_gen: Generator(E), config: anytype) Generato
             const MinLen = min_len;
             const MaxLen = max_len;
 
-            fn generate(random: std.Random, size: usize, allocator: std.mem.Allocator) ![]E {
-                const len = random.intRangeLessThan(usize, MinLen, MaxLen + 1);
+            fn generate(random: *FiniteRandom, size: usize, allocator: std.mem.Allocator) error{ OutOfMemory, OutOfEntropy }![]E {
+                const len = try random.intRangeLessThan(usize, MinLen, MaxLen + 1);
                 const result = try allocator.alloc(E, len);
 
                 for (result) |*elem| {
@@ -220,7 +220,7 @@ fn structGen(comptime T: type, config: anytype) Generator(T) {
 
     return Generator(T){
         .generateFn = struct {
-            fn generate(random: std.Random, size: usize, allocator: std.mem.Allocator) !T {
+            fn generate(random: *FiniteRandom, size: usize, allocator: std.mem.Allocator) error{ OutOfMemory, OutOfEntropy }!T {
                 var result: T = undefined;
 
                 inline for (fields) |field| {
@@ -246,10 +246,10 @@ fn enumGen(comptime T: type) Generator(T) {
     const enum_info = @typeInfo(T).@"enum";
     return Generator(T){
         .generateFn = struct {
-            fn generate(random: std.Random, size: usize, allocator: std.mem.Allocator) !T {
+            fn generate(random: *FiniteRandom, size: usize, allocator: std.mem.Allocator) error{ OutOfMemory, OutOfEntropy }!T {
                 _ = size;
                 _ = allocator;
-                const index = random.intRangeLessThan(usize, 0, enum_info.fields.len);
+                const index = try random.intRangeLessThan(usize, 0, enum_info.fields.len);
                 return std.enums.values(T)[index];
             }
         }.generate,
@@ -268,9 +268,9 @@ fn optionalGen(comptime Child: type, child_gen: Generator(Child), config: anytyp
             const ChildGen = child_gen;
             const NullProb = null_prob;
 
-            fn generate(random: std.Random, size: usize, allocator: std.mem.Allocator) !?Child {
+            fn generate(random: *FiniteRandom, size: usize, allocator: std.mem.Allocator) error{ OutOfMemory, OutOfEntropy }!?Child {
                 // Generate null with probability NullProb
-                if (random.float(f32) < NullProb) {
+                if (try random.float(f32) < NullProb) {
                     return null;
                 } else {
                     // Otherwise generate a value of the child type
@@ -306,7 +306,7 @@ pub fn tuple(comptime generators: anytype) blk: {
         .generateFn = struct {
             const Generators = generators;
 
-            fn generate(random: std.Random, size: usize, allocator: std.mem.Allocator) !TupleType {
+            fn generate(random: *FiniteRandom, size: usize, allocator: std.mem.Allocator) error{ OutOfMemory, OutOfEntropy }!TupleType {
                 var result: TupleType = undefined;
 
                 inline for (std.meta.fields(@TypeOf(Generators)), 0..) |field, i| {
@@ -342,11 +342,11 @@ pub fn oneOf(comptime generators: anytype, weights: ?[]const f32) blk: {
             const Generators = generators;
             const Weights = weights;
 
-            fn weightedChoice(rand: std.Random, weights_slice: []const f32) usize {
+            fn weightedChoice(rand: *FiniteRandom, weights_slice: []const f32) error{ OutOfMemory, OutOfEntropy }!usize {
                 var total: f32 = 0;
                 for (weights_slice) |w| total += w;
 
-                const r = rand.float(f32) * total;
+                const r = try rand.float(f32) * total;
                 var cumulative: f32 = 0;
 
                 for (weights_slice, 0..) |w, i| {
@@ -357,16 +357,16 @@ pub fn oneOf(comptime generators: anytype, weights: ?[]const f32) blk: {
                 return weights_slice.len - 1;
             }
 
-            fn generate(random: std.Random, size: usize, allocator: std.mem.Allocator) !T {
+            fn generate(random: *FiniteRandom, size: usize, allocator: std.mem.Allocator) error{ OutOfMemory, OutOfEntropy }!T {
                 const idx = if (Weights) |w|
-                    weightedChoice(random, w)
+                    try weightedChoice(random, w)
                 else
-                    random.uintLessThan(usize, Generators.len);
+                    try random.uintLessThan(usize, Generators.len);
 
                 // Use inline for to handle each generator at compile time
                 inline for (Generators, 0..) |genr, i| {
                     if (i == idx) {
-                        return genr.generate(random, size, allocator);
+                        return try genr.generate(random, size, allocator);
                     }
                 }
 
@@ -425,7 +425,7 @@ fn pointerGen(comptime Child: type, child_gen: Generator(Child)) Generator(*Chil
         .generateFn = struct {
             const ChildGen = child_gen;
 
-            fn generate(random: std.Random, size: usize, allocator: std.mem.Allocator) !*Child {
+            fn generate(random: *FiniteRandom, size: usize, allocator: std.mem.Allocator) error{ OutOfMemory, OutOfEntropy }!*Child {
                 const ptr = try allocator.create(Child);
                 errdefer allocator.destroy(ptr);
 
@@ -450,9 +450,9 @@ fn unionGen(comptime T: type, info: std.builtin.Type.Union, config: anytype) Gen
         .generateFn = struct {
             const FieldNames = field_names;
 
-            fn generate(random: std.Random, size: usize, allocator: std.mem.Allocator) !T {
+            fn generate(random: *FiniteRandom, size: usize, allocator: std.mem.Allocator) error{ OutOfMemory, OutOfEntropy }!T {
                 // Randomly select a field index
-                const field_index = random.intRangeLessThan(usize, 0, FieldNames.len);
+                const field_index = try random.intRangeLessThan(usize, 0, FieldNames.len);
                 const field_name = FieldNames[field_index];
 
                 // Use inline for to handle each field at compile time
@@ -483,7 +483,7 @@ fn vectorGen(comptime E: type, comptime len: usize, child_gen: Generator(E)) Gen
     return Generator(@Vector(len, E)){
         .generateFn = struct {
             const ChildGen = child_gen;
-            fn generate(random: std.Random, size: usize, allocator: std.mem.Allocator) !@Vector(len, E) {
+            fn generate(random: *FiniteRandom, size: usize, allocator: std.mem.Allocator) error{ OutOfMemory, OutOfEntropy }!@Vector(len, E) {
                 var result: [len]E = undefined;
                 for (&result) |*elem| {
                     elem.* = try ChildGen.generate(random, size, allocator);
