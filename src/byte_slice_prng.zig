@@ -56,6 +56,7 @@ pub const FiniteRandom = struct {
     }
 
     pub fn enumValue(self: *@This(), comptime EnumType: type) !EnumType {
+        comptime assert(@typeInfo(EnumType) == .@"enum");
         // Get all enum values at comptime
         const values = comptime std.enums.values(EnumType);
         // Get a random index at runtime
@@ -65,6 +66,7 @@ pub const FiniteRandom = struct {
     }
 
     pub fn enumValueWithIndex(self: *@This(), comptime EnumType: type, comptime Index: type) !EnumType {
+        comptime assert(@typeInfo(EnumType) == .@"enum");
         // Get all enum values at comptime
         const values = comptime std.enums.values(EnumType);
         // Get a random index at runtime with the specified index type
@@ -89,6 +91,8 @@ pub const FiniteRandom = struct {
     }
 
     pub fn uintLessThanBiased(self: *@This(), comptime T: type, less_than: T) !T {
+        comptime assert(@typeInfo(T).int.signedness == .unsigned);
+        assert(0 < less_than);
         if (less_than <= 1) return 0;
 
         // Get a random number and take the remainder when divided by less_than
@@ -97,30 +101,32 @@ pub const FiniteRandom = struct {
     }
 
     pub fn uintLessThan(self: *@This(), comptime T: type, less_than: T) !T {
-        if (less_than <= 1) return 0;
-        // NOTE: leaving this previous version in as reference
-        // I couldn’t get it to work. I traded of for a different algo
-        // which consume a LOT of data from the strea
-        // Ensure we're using an unsigned type for log2_int_ceil
-        // const bits_needed = std.math.log2_int_ceil(T, less_than);
-        // const mask = (@as(T, 1) << @intCast(bits_needed)) - 1;
-        // while (true) {
-        //     var bits_read: u16 = undefined;
-        //     const result = try self.bit_reader.readBits(T, @intCast(bits_needed), &bits_read, reader);
-        //     if (bits_read < bits_needed) return error.OutOfEntropy;
-        //     const masked_result = result & mask;
-        //     if (masked_result < less_than) return masked_result;
-        // }
-
+        comptime assert(@typeInfo(T).int.signedness == .unsigned);
         const bits = @typeInfo(T).int.bits;
-        const WT = std.meta.Int(.unsigned, bits * 2); // Wider type for multiplication
+        assert(0 < less_than);
 
-        // Get a random number of the full range
-        const rnd = try self.int(T);
+        // adapted from:
+        //   http://www.pcg-random.org/posts/bounded-rands.html
+        //   "Lemire's (with an extra tweak from me)"
+        var x = try self.int(T);
+        var m = math.mulWide(T, x, less_than);
+        var l: T = @truncate(m);
+        if (l < less_than) {
+            var t = -%less_than;
 
-        // Apply fast range algorithm
-        const product = @as(WT, rnd) * @as(WT, less_than);
-        return @as(T, @truncate(product >> bits));
+            if (t >= less_than) {
+                t -= less_than;
+                if (t >= less_than) {
+                    t %= less_than;
+                }
+            }
+            while (l < t) {
+                x = try self.int(T);
+                m = math.mulWide(T, x, less_than);
+                l = @truncate(m);
+            }
+        }
+        return @intCast(m >> bits);
     }
 
     pub fn uintAtMostBiased(self: *@This(), comptime T: type, at_most: T) !T {
@@ -166,7 +172,19 @@ pub const FiniteRandom = struct {
     }
 
     pub fn intRangeAtMost(self: *@This(), comptime T: type, at_least: T, at_most: T) !T {
-        return try self.intRangeLessThan(T, at_least, at_most + 1);
+        if (at_most == std.math.maxInt(T)) {
+            // Special case for maximum value to avoid overflow
+            if (at_least == at_most) return at_least;
+
+            // Generate a value in [at_least, at_most]
+            const range = at_most - at_least;
+
+            const UT = std.meta.Int(.unsigned, @typeInfo(T).int.bits);
+            const unsigned_result = try self.uintLessThan(UT, @intCast(range));
+            return at_least + @as(T, @intCast(unsigned_result));
+        } else {
+            return try self.intRangeLessThan(T, at_least, at_most + 1);
+        }
     }
 
     pub fn float(self: *@This(), comptime T: type) !T {
@@ -255,10 +273,12 @@ pub const FiniteRandom = struct {
         return proportions.len - 1;
     }
 };
+
 pub fn limitRangeBiased(comptime T: type, random_int: T, less_than: T) T {
     if (less_than <= 1) return 0;
     return random_int % less_than;
 }
+
 pub fn MinArrayIndex(comptime Index: type) type {
     return Index;
 }

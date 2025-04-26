@@ -60,28 +60,6 @@ test "FinitePrng boolean with random() method" {
     }
 }
 
-test "FinitePrng enumValue with random() method" {
-    const TestEnum = enum {
-        A,
-        B,
-        C,
-    };
-
-    // Use enough bytes to ensure we can get all enum values
-    const bytes = [_]u8{0x00} ** 32; // Much more data
-
-    var prng = FinitePrng.init(&bytes);
-    var rand = prng.random();
-
-    // Test that we can get enum values
-    _ = try rand.enumValue(TestEnum);
-    _ = try rand.enumValue(TestEnum);
-    _ = try rand.enumValue(TestEnum);
-
-    // Test with custom index type
-    _ = try rand.enumValueWithIndex(TestEnum, u8);
-}
-
 test "FinitePrng int with random() method" {
     const bytes = [_]u8{ 0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0 };
     var prng = FinitePrng.init(&bytes);
@@ -112,7 +90,7 @@ test "FinitePrng int with random() method" {
 
 test "FinitePrng uintLessThan with random() method" {
     // Use values that are above our limits to test the capping behavior
-    const bytes = [_]u8{ 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
+    const bytes = [_]u8{ 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x05 };
     var prng = FinitePrng.init(&bytes);
     var rand = prng.random();
 
@@ -125,6 +103,28 @@ test "FinitePrng uintLessThan with random() method" {
 
     // Test edge case
     try testing.expectEqual(@as(u8, 0), try rand.uintLessThan(u8, 1));
+}
+
+test "FinitePrng enumValue with random() method" {
+    const TestEnum = enum {
+        A,
+        B,
+        C,
+    };
+
+    // Use enough bytes to ensure we can get all enum values
+    const bytes = [_]u8{ 0x00, 0x01 } ** 32; // Much more data
+
+    var prng = FinitePrng.init(&bytes);
+    var rand = prng.random();
+
+    // Test that we can get enum values
+    _ = try rand.enumValue(TestEnum);
+    _ = try rand.enumValue(TestEnum);
+    _ = try rand.enumValue(TestEnum);
+
+    // Test with custom index type
+    _ = try rand.enumValueWithIndex(TestEnum, u8);
 }
 
 test "FinitePrng uintLessThanBiased with random() method" {
@@ -354,9 +354,6 @@ test "FinitePrng intRangeLessThanBiased with negative values using random() meth
     try testing.expectEqual(@as(i8, -10), try rand.intRangeLessThanBiased(i8, -10, -10));
 }
 
-// ai? our current implementation doesn’t reset the fixed buffer stream position to 0,
-// so any new ranodm() calls will not yield idem-potent results.
-// What would be the most ergonomic for this? Maybe we’d need a reset() method??
 test "FinitePrng random() method creates a fresh reader" {
     const bytes = [_]u8{ 0x12, 0x34, 0x56, 0x78 };
     var prng = FinitePrng.init(&bytes);
