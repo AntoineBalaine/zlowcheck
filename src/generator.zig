@@ -110,7 +110,7 @@ fn intGen(comptime T: type, config: anytype) Generator(T) {
                 _ = allocator;
 
                 // Sometimes generate boundary values (20% of the time)
-                if (try random.float(f32) < 0.2) {
+                if (try random.floatNorm(f32) < 0.2) {
                     var boundaries: [7]T = undefined;
                     const count = getIntBoundaryValues(T, Min, Max, &boundaries);
 
@@ -270,7 +270,7 @@ fn optionalGen(comptime Child: type, child_gen: Generator(Child), config: anytyp
 
             fn generate(random: *FiniteRandom, size: usize, allocator: std.mem.Allocator) error{ OutOfMemory, OutOfEntropy }!?Child {
                 // Generate null with probability NullProb
-                if (try random.float(f32) < NullProb) {
+                if (try random.floatNorm(f32) < NullProb) {
                     return null;
                 } else {
                     // Otherwise generate a value of the child type
@@ -346,7 +346,7 @@ pub fn oneOf(comptime generators: anytype, weights: ?[]const f32) blk: {
                 var total: f32 = 0;
                 for (weights_slice) |w| total += w;
 
-                const r = try rand.float(f32) * total;
+                const r = try rand.floatNorm(f32) * total;
                 var cumulative: f32 = 0;
 
                 for (weights_slice, 0..) |w, i| {
