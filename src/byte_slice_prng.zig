@@ -1,3 +1,8 @@
+//! Adapted from Random.std,
+//! with modified implementation to
+//! allow function signatures which return
+//! OutOfEntropy errors.
+
 const std = @import("std");
 const math = std.math;
 const mem = std.mem;
@@ -56,13 +61,7 @@ pub const FiniteRandom = struct {
     }
 
     pub fn enumValue(self: *@This(), comptime EnumType: type) !EnumType {
-        comptime assert(@typeInfo(EnumType) == .@"enum");
-        // Get all enum values at comptime
-        const values = comptime std.enums.values(EnumType);
-        // Get a random index at runtime
-        const random_index = try self.uintLessThan(usize, values.len);
-        // Return the enum value at that index
-        return values[random_index];
+        return self.enumValueWithIndex(EnumType, usize);
     }
 
     pub fn enumValueWithIndex(self: *@This(), comptime EnumType: type, comptime Index: type) !EnumType {
@@ -70,9 +69,17 @@ pub const FiniteRandom = struct {
         // Get all enum values at comptime
         const values = comptime std.enums.values(EnumType);
         // Get a random index at runtime with the specified index type
-        const random_index = try self.uintLessThan(Index, values.len);
-        // Return the enum value at that index
-        return values[@intCast(random_index)];
+
+        comptime assert(values.len > 0); // can't return anything
+        comptime assert(maxInt(Index) >= values.len - 1); // can't access all values
+
+        const index = if (comptime values.len - 1 == maxInt(Index))
+            try self.int(Index)
+        else
+            try self.uintLessThan(Index, values.len);
+
+        const MinInt = MinArrayIndex(Index);
+        return values[@as(MinInt, @intCast(index))];
     }
 
     pub fn int(self: *@This(), comptime T: type) !T {
@@ -130,10 +137,20 @@ pub const FiniteRandom = struct {
     }
 
     pub fn uintAtMostBiased(self: *@This(), comptime T: type, at_most: T) !T {
+        assert(@typeInfo(T).int.signedness == .unsigned);
+        if (at_most == maxInt(T)) {
+            // have the full range
+            return self.int(T);
+        }
         return try self.uintLessThanBiased(T, at_most + 1);
     }
 
     pub fn uintAtMost(self: *@This(), comptime T: type, at_most: T) !T {
+        assert(@typeInfo(T).int.signedness == .unsigned);
+        if (at_most == maxInt(T)) {
+            // have the full range
+            return self.int(T);
+        }
         return try self.uintLessThan(T, at_most + 1);
     }
 
@@ -280,5 +297,7 @@ pub fn limitRangeBiased(comptime T: type, random_int: T, less_than: T) T {
 }
 
 pub fn MinArrayIndex(comptime Index: type) type {
-    return Index;
+    const index_info = @typeInfo(Index).int;
+    assert(index_info.signedness == .unsigned);
+    return if (index_info.bits >= @typeInfo(usize).int.bits) usize else Index;
 }
