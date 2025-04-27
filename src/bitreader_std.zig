@@ -1,3 +1,7 @@
+//! A modified version of the std lib’s BitReader, which doesn’t store its reader.
+//! This is designed to allow passing the reader into method calls.
+//! This allows storing the reader in a data structure that wraps the bitreader - on the stack.
+//! (- Perken)
 const std = @import("std");
 
 //General note on endianess:
