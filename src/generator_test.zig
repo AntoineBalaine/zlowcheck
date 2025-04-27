@@ -811,7 +811,8 @@ test "single pointer to primitive type" {
         .child_config = .{ .min = -50, .max = 50 },
     });
 
-    const bytes = [_]u8{42} ** 4096;
+    var bytes: [4096]u8 = undefined;
+    load_bytes(&bytes);
     var finite_prng = FinitePrng.init(&bytes);
     var random = finite_prng.random();
 
@@ -835,7 +836,8 @@ test "pointer to array" {
         },
     });
 
-    const bytes = [_]u8{ 42, 0 } ** 512; // Alternating bytes for variety
+    var bytes: [4096]u8 = undefined;
+    load_bytes(&bytes);
     var finite_prng = FinitePrng.init(&bytes);
     var random = finite_prng.random();
 
@@ -865,7 +867,9 @@ test "untagged union generator produces valid values" {
         .boolean = .{},
     });
 
-    const bytes = [_]u8{ 0, 1, 2 } ** 4096; // Repeating 0-2 to hit all union cases
+    var bytes: [4096]u8 = undefined;
+    load_bytes(&bytes);
+
     var finite_prng = FinitePrng.init(&bytes);
     var random = finite_prng.random();
 
@@ -929,7 +933,8 @@ test "tagged union generator works correctly" {
         },
     });
 
-    const bytes = [_]u8{ 0, 1, 2 } ** 4096; // Repeating 0-2 to hit all union cases
+    var bytes: [4096]u8 = undefined;
+    load_bytes(&bytes);
     var finite_prng = FinitePrng.init(&bytes);
     var random = finite_prng.random();
 
@@ -992,7 +997,8 @@ test "union with slice fields" {
         },
     });
 
-    const bytes = [_]u8{ 0, 1, 2, 3, 4, 5 } ** 200; // Variety of values
+    var bytes: [4096]u8 = undefined;
+    load_bytes(&bytes);
     var finite_prng = FinitePrng.init(&bytes);
     var random = finite_prng.random();
 
@@ -1026,7 +1032,8 @@ test "vector generator produces vectors within range" {
         .child_config = .{ .min = -10, .max = 10 },
     });
 
-    const bytes = [_]u8{42} ** 4096;
+    var bytes: [4096]u8 = undefined;
+    load_bytes(&bytes);
     var finite_prng = FinitePrng.init(&bytes);
     var random = finite_prng.random();
 
@@ -1051,7 +1058,8 @@ test "vector generator with boolean elements" {
         .child_config = .{},
     });
 
-    const bytes = [_]u8{ 42, 0 } ** 512; // Alternating bytes for variety
+    var bytes: [4096]u8 = undefined;
+    load_bytes(&bytes);
     var finite_prng = FinitePrng.init(&bytes);
     var random = finite_prng.random();
 
@@ -1091,7 +1099,8 @@ test "vector generator with map function" {
         }
     }.scaleElements);
 
-    const bytes = [_]u8{42} ** 4096;
+    var bytes: [4096]u8 = undefined;
+    load_bytes(&bytes);
     var finite_prng = FinitePrng.init(&bytes);
     var random = finite_prng.random();
 
@@ -1120,7 +1129,8 @@ test "tuple generator combines multiple generators" {
     // Combine them into a tuple generator
     const tupleGenerator = tuple(.{ intGenerator, boolGenerator, floatGenerator });
 
-    const bytes = [_]u8{42} ** 4096;
+    var bytes: [4096]u8 = undefined;
+    load_bytes(&bytes);
     var finite_prng = FinitePrng.init(&bytes);
     var random = finite_prng.random();
 
@@ -1161,7 +1171,8 @@ test "tuple generator with nested tuples" {
     // Create a generator that combines a bool with a pair
     const nestedTupleGenerator = tuple(.{ gen(bool, .{}), pairGenerator });
 
-    const bytes = [_]u8{42} ** 4096;
+    var bytes: [4096]u8 = undefined;
+    load_bytes(&bytes);
     var finite_prng = FinitePrng.init(&bytes);
     var random = finite_prng.random();
 
@@ -1194,7 +1205,8 @@ test "tuple generator for property testing" {
         gen(i32, .{ .min = -100, .max = 100 }),
     });
 
-    const bytes = [_]u8{42} ** 4096;
+    var bytes: [4096]u8 = undefined;
+    load_bytes(&bytes);
     var finite_prng = FinitePrng.init(&bytes);
     var random = finite_prng.random();
 
@@ -1221,7 +1233,8 @@ test "oneOf selects from multiple generators" {
     // Combine them with oneOf
     const combinedGen = oneOf(.{ smallIntGen, mediumIntGen, largeIntGen }, null);
 
-    const bytes = [_]u8{ 0, 1, 2 } ** 4096; // Repeating 0-2 to hit all generators
+    var bytes: [4096]u8 = undefined;
+    load_bytes(&bytes);
     var finite_prng = FinitePrng.init(&bytes);
     var random = finite_prng.random();
 
@@ -1268,7 +1281,8 @@ test "oneOf respects weights" {
     const weights = [_]f32{ 0.9, 0.1 }; // 90% true, 10% false
     const weightedGen = oneOf(.{ trueGen, falseGen }, &weights);
 
-    const bytes = [_]u8{ 10, 20, 30, 40, 50, 60, 70, 80, 90, 100 } ** 100; // Values that will favor the first generator
+    var bytes: [4096]u8 = undefined;
+    load_bytes(&bytes);
     var finite_prng = FinitePrng.init(&bytes);
     var random = finite_prng.random();
 
@@ -1312,7 +1326,8 @@ test "oneOf with union generators" {
     // Combine them with oneOf
     const valueGen = oneOf(.{ intValueGen, floatValueGen }, null);
 
-    const bytes = [_]u8{ 0, 1 } ** 4096; // Repeating 0-1 to hit both variants
+    var bytes: [4096]u8 = undefined;
+    load_bytes(&bytes);
     var finite_prng = FinitePrng.init(&bytes);
     var random = finite_prng.random();
 
