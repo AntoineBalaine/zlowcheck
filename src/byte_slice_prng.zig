@@ -114,25 +114,21 @@ pub const FiniteRandom = struct {
 
         // adapted from:
         //   http://www.pcg-random.org/posts/bounded-rands.html
-        //   "Lemire's (with an extra tweak from me)"
-        var x = try self.int(T);
-        var m = math.mulWide(T, x, less_than);
-        var l: T = @truncate(m);
-        if (l < less_than) {
-            var t = -%less_than;
+        // Calculate threshold using wrapping negation
+        const t = (0 -% less_than) % less_than;
 
-            if (t >= less_than) {
-                t -= less_than;
-                if (t >= less_than) {
-                    t %= less_than;
-                }
-            }
-            while (l < t) {
-                x = try self.int(T);
-                m = math.mulWide(T, x, less_than);
-                l = @truncate(m);
-            }
+        // Generate random values until we find one that passes the threshold test
+        var x: T = undefined;
+        var m: @TypeOf(math.mulWide(T, 0, 0)) = undefined;
+        var l: T = undefined;
+
+        while (true) {
+            x = try self.int(T);
+            m = math.mulWide(T, x, less_than);
+            l = @truncate(m);
+            if (l >= t) break;
         }
+
         return @intCast(m >> bits);
     }
 
