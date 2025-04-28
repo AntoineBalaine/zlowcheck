@@ -1122,9 +1122,9 @@ test "vector generator with map function" {
 
 test "tuple generator combines multiple generators" {
     // Create generators for different types
-    const intGenerator = gen(i32, .{ .min = 1, .max = 100 });
-    const boolGenerator = gen(bool, .{});
-    const floatGenerator = gen(f64, .{ .min = -10.0, .max = 10.0 });
+    const intGenerator = comptime gen(i32, .{ .min = 1, .max = 100 });
+    const boolGenerator = comptime gen(bool, .{});
+    const floatGenerator = comptime gen(f64, .{ .min = -10.0, .max = 10.0 });
 
     // Combine them into a tuple generator
     const tupleGenerator = tuple(.{ intGenerator, boolGenerator, floatGenerator });
@@ -1158,15 +1158,15 @@ test "tuple generator combines multiple generators" {
 
 test "tuple generator with nested tuples" {
     // Create generators for different types
-    const intGenerator = gen(i32, .{ .min = 1, .max = 10 });
-    const stringGenerator = gen([]u8, .{
+    const intGenerator = comptime gen(i32, .{ .min = 1, .max = 10 });
+    const stringGenerator = comptime gen([]u8, .{
         .min_len = 3,
         .max_len = 5,
         .child_config = .{},
     });
 
     // Create a pair generator
-    const pairGenerator = tuple(.{ intGenerator, stringGenerator });
+    const pairGenerator = comptime tuple(.{ intGenerator, stringGenerator });
 
     // Create a generator that combines a bool with a pair
     const nestedTupleGenerator = tuple(.{ gen(bool, .{}), pairGenerator });
@@ -1226,9 +1226,9 @@ test "tuple generator for property testing" {
 
 test "oneOf selects from multiple generators" {
     // Create several integer generators with different ranges
-    const smallIntGen = gen(i32, .{ .min = 1, .max = 10 });
-    const mediumIntGen = gen(i32, .{ .min = 11, .max = 100 });
-    const largeIntGen = gen(i32, .{ .min = 101, .max = 1000 });
+    const smallIntGen = comptime gen(i32, .{ .min = 1, .max = 10 });
+    const mediumIntGen = comptime gen(i32, .{ .min = 11, .max = 100 });
+    const largeIntGen = comptime gen(i32, .{ .min = 101, .max = 1000 });
 
     // Combine them with oneOf
     const combinedGen = oneOf(.{ smallIntGen, mediumIntGen, largeIntGen }, null);
@@ -1265,13 +1265,13 @@ test "oneOf selects from multiple generators" {
 
 test "oneOf respects weights" {
     // Create two boolean generators - one that always generates true, one that always generates false
-    const trueGen = gen(bool, .{}).map(bool, struct {
+    const trueGen = comptime gen(bool, .{}).map(bool, struct {
         fn alwaysTrue(_: bool) bool {
             return true;
         }
     }.alwaysTrue);
 
-    const falseGen = gen(bool, .{}).map(bool, struct {
+    const falseGen = comptime gen(bool, .{}).map(bool, struct {
         fn alwaysFalse(_: bool) bool {
             return false;
         }
@@ -1311,13 +1311,13 @@ test "oneOf with union generators" {
     };
 
     // Create generators for each variant
-    const intValueGen = gen(i32, .{ .min = 1, .max = 100 }).map(Value, struct {
+    const intValueGen = comptime gen(i32, .{ .min = 1, .max = 100 }).map(Value, struct {
         fn toIntValue(i: i32) Value {
             return Value{ .int = i };
         }
     }.toIntValue);
 
-    const floatValueGen = gen(f64, .{ .min = 0.0, .max = 1.0 }).map(Value, struct {
+    const floatValueGen = comptime gen(f64, .{ .min = 0.0, .max = 1.0 }).map(Value, struct {
         fn toFloatValue(f: f64) Value {
             return Value{ .float = f };
         }

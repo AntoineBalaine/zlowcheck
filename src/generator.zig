@@ -17,35 +17,18 @@ pub fn Generator(comptime T: type) type {
         }
 
         /// Map a generator to a new type
-        pub fn map(self: Self, comptime U: type, mapFn: fn (T) U) Generator(U) {
-            return Generator(U){
-                .generateFn = struct {
-                    fn generate(random: *FiniteRandom, allocator: std.mem.Allocator) error{ OutOfMemory, OutOfEntropy }!U {
-                        const value = try self.generate(random, allocator);
-                        return mapFn(value);
-                    }
-                }.generate,
+        pub fn map(self: *const Self, comptime U: type, mapFn: *const fn (T) U) MappedGenerator(T, U) {
+            return MappedGenerator(T, U){
+                .parent = self,
+                .map_fn = mapFn,
             };
         }
 
         /// Filter generated values
-        pub fn filter(self: Self, filterFn: fn (T) bool) Generator(T) {
-            return Generator(T){
-                .generateFn = struct {
-                    fn generate(random: *FiniteRandom, allocator: std.mem.Allocator) error{ OutOfMemory, OutOfEntropy }!T {
-                        // Try a limited number of times to find a value that passes the filter
-                        var attempts: usize = 0;
-                        const max_attempts = 100;
-
-                        while (attempts < max_attempts) : (attempts += 1) {
-                            const value = try self.generate(random, allocator);
-                            if (filterFn(value)) return value;
-                        }
-
-                        // If we can't find a value after max attempts, return the last one
-                        return self.generate(random, allocator);
-                    }
-                }.generate,
+        pub fn filter(self: *const Self, filterFn: fn (T) bool) FilteredGenerator(T) {
+            return FilteredGenerator(T){
+                .parent = self,
+                .filter_fn = filterFn,
             };
         }
     };
@@ -317,7 +300,7 @@ pub fn tuple(comptime generators: anytype) blk: {
 }
 
 /// Choose between multiple generators
-pub fn oneOf(comptime generators: anytype, weights: ?[]const f32) blk: {
+pub fn oneOf(comptime generators: anytype, comptime weights: ?[]const f32) blk: {
     // Get the type from the first generator
     const T = @TypeOf(generators[0]).ValueType;
 
@@ -543,4 +526,78 @@ fn getFloatSpecialValues(comptime T: type, min_val: T, max_val: T, out_values: [
     }
 
     return list.items.len;
+}
+
+pub fn MappedGenerator(comptime T: type, comptime U: type) type {
+    return struct {
+        const MappedSelf = @This();
+
+        /// The type of values this generator produces
+        pub const ValueType = U;
+
+        /// Parent generator
+        parent: *const Generator(T),
+
+        /// Mapping functions
+        map_fn: *const fn (T) U,
+
+        /// Context for mapped values
+        const MapContext = struct {
+            original_value: T,
+            original_context: ?*anyopaque,
+            context_deinit: ?*const fn (?*anyopaque, std.mem.Allocator) void,
+
+            /// Free resources associated with this context
+            fn deinit(ctx: ?*anyopaque, allocator: std.mem.Allocator) void {
+                if (ctx) |ptr| {
+                    const self_ctx: *@This() = @ptrCast(@alignCast(ptr));
+                    if (self_ctx.original_context != null and self_ctx.context_deinit != null) {
+                        self_ctx.context_deinit.?(self_ctx.original_context, allocator);
+                    }
+                    allocator.destroy(self_ctx);
+                }
+            }
+        };
+
+        /// Generate a mapped value
+        pub fn generate(self: MappedSelf, random: *FiniteRandom, allocator: std.mem.Allocator) error{ OutOfMemory, OutOfEntropy }!U {
+            // Generate original value with context
+            const original = try self.parent.generate(random, allocator);
+
+            // Map the value
+            const mapped_value = self.map_fn(original);
+
+            return mapped_value;
+        }
+    };
+}
+
+pub fn FilteredGenerator(comptime T: type) type {
+    return struct {
+        const FilteredSelf = @This();
+
+        /// The type of values this generator produces
+        pub const ValueType = T;
+
+        /// Parent generator
+        parent: *const Generator(T),
+
+        /// Filter function
+        filter_fn: *const fn (T) bool,
+
+        /// Generate a value that passes the filter
+        pub fn generate(self: FilteredSelf, random: *FiniteRandom, allocator: std.mem.Allocator) error{ OutOfMemory, OutOfEntropy }!T {
+            // Try a limited number of times to find a value that passes the filter
+            var attempts: usize = 0;
+            const max_attempts = 100;
+
+            while (attempts < max_attempts) : (attempts += 1) {
+                const value = try self.parent.generate(random, allocator);
+                if (self.filter_fn(value)) return value;
+            }
+
+            // If we can't find a value after max attempts, return the last one anyway
+            return self.parent.generate(random, allocator);
+        }
+    };
 }
