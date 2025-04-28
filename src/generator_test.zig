@@ -25,7 +25,7 @@ test "int generator produces values within range" {
 
     // Generate 100 values and check they're all within range
     for (0..100) |_| {
-        const value = intGenerator.generate(&random, 10, std.testing.allocator) catch {
+        const value = intGenerator.generate(&random, std.testing.allocator) catch {
             random = finite_prng.random();
             continue;
         };
@@ -59,7 +59,7 @@ test "int generator produces boundary values" {
     // Generate many values to increase chance of hitting boundaries
     var found_count: usize = 0;
     for (0..1000) |_| {
-        const value = intGenerator.generate(&random, 10, std.testing.allocator) catch {
+        const value = intGenerator.generate(&random, std.testing.allocator) catch {
             random = finite_prng.random();
             continue;
         };
@@ -90,7 +90,7 @@ test "float generator produces values within range" {
 
     // Generate 100 values and check they're all within range
     for (0..100) |_| {
-        const value = floatGenerator.generate(&random, 10, std.testing.allocator) catch {
+        const value = floatGenerator.generate(&random, std.testing.allocator) catch {
             random = finite_prng.random();
             continue;
         };
@@ -119,7 +119,7 @@ test "float generator produces special values" {
 
     // Generate many values to increase chance of hitting special values
     for (0..1000) |_| {
-        const value = floatGenerator.generate(&random, 10, std.testing.allocator) catch break;
+        const value = floatGenerator.generate(&random, std.testing.allocator) catch break;
 
         if (value == 0.0) seen_zero = true;
         if (value == 1.0) seen_one = true;
@@ -157,7 +157,7 @@ test "bool generator produces both true and false" {
 
     // Generate values until we've seen both true and false
     for (0..100) |_| {
-        const value = boolGenerator.generate(&random, 10, std.testing.allocator) catch {
+        const value = boolGenerator.generate(&random, std.testing.allocator) catch {
             random = finite_prng.random();
             continue;
         };
@@ -189,7 +189,7 @@ test "map transforms values correctly" {
 
     // Generate values and check they're all doubled
     for (0..100) |_| {
-        const value = doubledGenerator.generate(&random, 10, std.testing.allocator) catch {
+        const value = doubledGenerator.generate(&random, std.testing.allocator) catch {
             random = finite_prng.random();
             continue;
         };
@@ -215,7 +215,7 @@ test "filter constrains values correctly" {
 
     // Generate values and check they're all positive
     for (0..100) |_| {
-        const value = positiveGenerator.generate(&random, 10, std.testing.allocator) catch {
+        const value = positiveGenerator.generate(&random, std.testing.allocator) catch {
             random = finite_prng.random();
             continue; // Skip this iteration and continue with the loop
         };
@@ -236,7 +236,7 @@ test "array generator produces arrays of the correct length" {
 
     // Generate a few arrays and check their length
     for (0..10) |_| {
-        const array = arrayGenerator.generate(&random, 10, std.testing.allocator) catch {
+        const array = arrayGenerator.generate(&random, std.testing.allocator) catch {
             random = finite_prng.random();
             continue;
         };
@@ -258,7 +258,7 @@ test "array generator respects element bounds" {
 
     // Generate arrays and check all elements are within bounds
     for (0..10) |_| {
-        const array = arrayGenerator.generate(&random, 10, std.testing.allocator) catch {
+        const array = arrayGenerator.generate(&random, std.testing.allocator) catch {
             random = finite_prng.random();
             continue;
         };
@@ -284,7 +284,7 @@ test "nested array generator works correctly" {
     var random = finite_prng.random();
 
     // Generate a nested array and check its structure and values
-    const nested_array = nestedArrayGenerator.generate(&random, 10, std.testing.allocator) catch {
+    const nested_array = nestedArrayGenerator.generate(&random, std.testing.allocator) catch {
         random = finite_prng.random();
         return;
     };
@@ -319,7 +319,7 @@ test "array of booleans generator works correctly" {
     var seen_false = false;
 
     for (0..10) |_| {
-        const array = boolArrayGenerator.generate(&random, 10, std.testing.allocator) catch {
+        const array = boolArrayGenerator.generate(&random, std.testing.allocator) catch {
             random = finite_prng.random();
             continue;
         };
@@ -361,7 +361,7 @@ test "array generator with map function" {
 
     // Generate arrays and check elements are doubled
     for (0..10) |_| {
-        const array = doubledArrayGenerator.generate(&random, 10, std.testing.allocator) catch {
+        const array = doubledArrayGenerator.generate(&random, std.testing.allocator) catch {
             random = finite_prng.random();
             continue;
         };
@@ -389,7 +389,7 @@ test "slice generator produces slices of correct length range" {
 
     // Generate slices and check their length is within range
     for (0..10) |_| {
-        const slice = sliceGenerator.generate(&random, 10, std.testing.allocator) catch {
+        const slice = sliceGenerator.generate(&random, std.testing.allocator) catch {
             random = finite_prng.random();
             continue;
         };
@@ -415,7 +415,7 @@ test "slice generator respects element bounds" {
 
     // Generate slices and check all elements are within bounds
     for (0..10) |_| {
-        const slice = sliceGenerator.generate(&random, 10, std.testing.allocator) catch {
+        const slice = sliceGenerator.generate(&random, std.testing.allocator) catch {
             random = finite_prng.random();
             continue;
         };
@@ -454,7 +454,7 @@ test "slice generator with map function" {
 
     // Generate slices and check elements are doubled
     for (0..5) |_| {
-        const slice = doubledSliceGenerator.generate(&random, 10, std.testing.allocator) catch {
+        const slice = doubledSliceGenerator.generate(&random, std.testing.allocator) catch {
             random = finite_prng.random();
             continue;
         };
@@ -486,7 +486,7 @@ test "nested slice generator works correctly" {
     var random = finite_prng.random();
 
     // Generate a nested slice and check its structure and values
-    const nested_slice = nestedSliceGenerator.generate(&random, 10, std.testing.allocator) catch {
+    const nested_slice = nestedSliceGenerator.generate(&random, std.testing.allocator) catch {
         random = finite_prng.random();
         return;
     };
@@ -530,7 +530,7 @@ test "struct generator works correctly" {
 
     // Generate points and check field bounds
     for (0..10) |_| {
-        const point = pointGenerator.generate(&random, 10, std.testing.allocator) catch {
+        const point = pointGenerator.generate(&random, std.testing.allocator) catch {
             random = finite_prng.random();
             continue;
         };
@@ -571,7 +571,7 @@ test "nested struct generator works correctly" {
 
     // Generate rectangles and check field bounds
     for (0..10) |_| {
-        const rect = rectGenerator.generate(&random, 10, std.testing.allocator) catch {
+        const rect = rectGenerator.generate(&random, std.testing.allocator) catch {
             random = finite_prng.random();
             continue;
         };
@@ -609,7 +609,7 @@ test "enum generator produces valid enum values" {
 
     // Generate many values to ensure we get all enum variants
     for (0..100) |_| {
-        const color = colorGenerator.generate(&random, 10, std.testing.allocator) catch {
+        const color = colorGenerator.generate(&random, std.testing.allocator) catch {
             random = finite_prng.random();
             continue;
         };
@@ -655,7 +655,7 @@ test "enum generator with non-zero values" {
 
     // Generate many values to ensure we get all enum variants
     for (0..100) |_| {
-        const status = statusGenerator.generate(&random, 10, std.testing.allocator) catch {
+        const status = statusGenerator.generate(&random, std.testing.allocator) catch {
             random = finite_prng.random();
             continue;
         };
@@ -705,7 +705,7 @@ test "optional generator produces both null and values" {
 
     // Generate values until we've seen both null and non-null
     for (0..100) |_| {
-        const value = optIntGenerator.generate(&random, 10, std.testing.allocator) catch {
+        const value = optIntGenerator.generate(&random, std.testing.allocator) catch {
             random = finite_prng.random();
             continue;
         };
@@ -749,11 +749,11 @@ test "optional generator with custom null probability" {
     const iterations = 1000;
 
     for (0..iterations) |_| {
-        const rare_value = rareNullGen.generate(&random, 10, std.testing.allocator) catch {
+        const rare_value = rareNullGen.generate(&random, std.testing.allocator) catch {
             random = finite_prng.random();
             continue;
         };
-        const frequent_value = frequentNullGen.generate(&random, 10, std.testing.allocator) catch {
+        const frequent_value = frequentNullGen.generate(&random, std.testing.allocator) catch {
             random = finite_prng.random();
             continue;
         };
@@ -795,7 +795,7 @@ test "single pointer generator works correctly" {
     var random = finite_prng.random();
 
     // Generate a pointer to a Point and check its values
-    const point_ptr = pointPtrGenerator.generate(&random, 10, std.testing.allocator) catch {
+    const point_ptr = pointPtrGenerator.generate(&random, std.testing.allocator) catch {
         random = finite_prng.random();
         return;
     };
@@ -818,7 +818,7 @@ test "single pointer to primitive type" {
 
     // Generate several pointers and check their values
     for (0..10) |_| {
-        const int_ptr = intPtrGenerator.generate(&random, 10, std.testing.allocator) catch {
+        const int_ptr = intPtrGenerator.generate(&random, std.testing.allocator) catch {
             random = finite_prng.random();
             continue;
         };
@@ -842,7 +842,7 @@ test "pointer to array" {
     var random = finite_prng.random();
 
     // Generate a pointer to an array and check its values
-    const array_ptr = try arrayPtrGenerator.generate(&random, 10, std.testing.allocator);
+    const array_ptr = try arrayPtrGenerator.generate(&random, std.testing.allocator);
     defer std.testing.allocator.destroy(array_ptr);
 
     try std.testing.expectEqual(@as(usize, 3), array_ptr.len);
@@ -880,7 +880,7 @@ test "untagged union generator produces valid values" {
 
     // Generate many values to ensure we get all variants
     for (0..100) |_| {
-        const value = valueGenerator.generate(&random, 10, std.testing.allocator) catch {
+        const value = valueGenerator.generate(&random, std.testing.allocator) catch {
             random = finite_prng.random();
             continue;
         };
@@ -945,7 +945,7 @@ test "tagged union generator works correctly" {
 
     // Generate many values to ensure we get all variants
     for (0..100) |_| {
-        const shape = shapeGenerator.generate(&random, 10, std.testing.allocator) catch {
+        const shape = shapeGenerator.generate(&random, std.testing.allocator) catch {
             random = finite_prng.random();
             continue;
         };
@@ -1004,7 +1004,7 @@ test "union with slice fields" {
 
     // Generate a few values and check their constraints
     for (0..10) |_| {
-        const data = dataGenerator.generate(&random, 10, std.testing.allocator) catch {
+        const data = dataGenerator.generate(&random, std.testing.allocator) catch {
             random = finite_prng.random();
             continue;
         };
@@ -1039,7 +1039,7 @@ test "vector generator produces vectors within range" {
 
     // Generate a few vectors and check their values
     for (0..10) |_| {
-        const vector = vectorGenerator.generate(&random, 10, std.testing.allocator) catch {
+        const vector = vectorGenerator.generate(&random, std.testing.allocator) catch {
             random = finite_prng.random();
             continue;
         };
@@ -1068,7 +1068,7 @@ test "vector generator with boolean elements" {
     var seen_false = false;
 
     for (0..10) |_| {
-        const vector = boolVectorGenerator.generate(&random, 10, std.testing.allocator) catch {
+        const vector = boolVectorGenerator.generate(&random, std.testing.allocator) catch {
             random = finite_prng.random();
             continue;
         };
@@ -1106,7 +1106,7 @@ test "vector generator with map function" {
 
     // Generate vectors and check elements are scaled
     for (0..10) |_| {
-        const vector = scaledVectorGenerator.generate(&random, 10, std.testing.allocator) catch {
+        const vector = scaledVectorGenerator.generate(&random, std.testing.allocator) catch {
             random = finite_prng.random();
             continue;
         };
@@ -1136,7 +1136,7 @@ test "tuple generator combines multiple generators" {
 
     // Generate tuples and check their components
     for (0..10) |_| {
-        const value = tupleGenerator.generate(&random, 10, std.testing.allocator) catch {
+        const value = tupleGenerator.generate(&random, std.testing.allocator) catch {
             random = finite_prng.random();
             continue;
         };
@@ -1178,7 +1178,7 @@ test "tuple generator with nested tuples" {
 
     // Generate nested tuples and check their components
     for (0..5) |_| {
-        const value = nestedTupleGenerator.generate(&random, 10, std.testing.allocator) catch {
+        const value = nestedTupleGenerator.generate(&random, std.testing.allocator) catch {
             random = finite_prng.random();
             continue;
         };
@@ -1212,7 +1212,7 @@ test "tuple generator for property testing" {
 
     // Test the commutative property of addition
     for (0..100) |_| {
-        const pair = pairGenerator.generate(&random, 10, std.testing.allocator) catch {
+        const pair = pairGenerator.generate(&random, std.testing.allocator) catch {
             random = finite_prng.random();
             continue;
         };
@@ -1245,7 +1245,7 @@ test "oneOf selects from multiple generators" {
 
     // Generate many values to ensure we get all ranges
     for (0..1000) |_| {
-        const value = combinedGen.generate(&random, 10, std.testing.allocator) catch {
+        const value = combinedGen.generate(&random, std.testing.allocator) catch {
             random = finite_prng.random();
             continue;
         };
@@ -1292,7 +1292,7 @@ test "oneOf respects weights" {
     const iterations = 1000;
 
     for (0..iterations) |_| {
-        const value = weightedGen.generate(&random, 10, std.testing.allocator) catch {
+        const value = weightedGen.generate(&random, std.testing.allocator) catch {
             random = finite_prng.random();
             continue;
         };
@@ -1337,7 +1337,7 @@ test "oneOf with union generators" {
 
     // Generate values until we've seen both variants
     for (0..100) |_| {
-        const value = valueGen.generate(&random, 10, std.testing.allocator) catch {
+        const value = valueGen.generate(&random, std.testing.allocator) catch {
             random = finite_prng.random();
             continue;
         };
