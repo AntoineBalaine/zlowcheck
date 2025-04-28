@@ -1,14 +1,11 @@
 const std = @import("std");
 const generator2 = @import("generator2.zig");
-const property = @import("property2.zig");
 const runner = @import("runner.zig");
 
 const gen = generator2.gen;
 const Value = generator2.Value;
 const ValueList = generator2.ValueList;
-const Property = property.Property;
-const property_fn = property.property;
-const PropertyResult = property.PropertyResult;
+const property = @import("property2.zig").property;
 const tuple = generator2.tuple;
 const oneOf = generator2.oneOf;
 
@@ -174,7 +171,7 @@ test "filter with shrinking" {
 test "basic property test (addition commutative)" {
     // Test the commutative property of addition: a + b == b + a
     const TestType = struct { a: i32, b: i32 };
-    const commutativeProperty = property_fn(TestType, gen(TestType, .{
+    const commutativeProperty = property(TestType, gen(TestType, .{
         .a = .{ .min = -100, .max = 100 },
         .b = .{ .min = -100, .max = 100 },
     }), struct {
@@ -193,7 +190,7 @@ test "basic property test (addition commutative)" {
 
 test "failing property with shrinking (all integers are positive)" {
     // Test the (false) property that all integers are positive
-    const positiveProperty = property_fn(i32, gen(i32, .{ .min = -100, .max = 100 }), struct {
+    const positiveProperty = property(i32, gen(i32, .{ .min = -100, .max = 100 }), struct {
         fn test_(n: i32) bool {
             return n > 0;
         }
@@ -223,7 +220,7 @@ test "property with hooks" {
     var teardown_called: usize = 0;
 
     // Create a property with hooks
-    var prop = property_fn(i32, gen(i32, .{ .min = 1, .max = 10 }), struct {
+    var prop = property(i32, gen(i32, .{ .min = 1, .max = 10 }), struct {
         fn test_(n: i32) bool {
             return n > 0; // Always true for our range
         }
@@ -256,7 +253,7 @@ test "property with context-less hooks" {
     var teardown_called: usize = 0;
 
     // Create a property with context-less hooks that use pointers
-    var prop = property_fn(i32, gen(i32, .{ .min = 1, .max = 10 }), struct {
+    var prop = property(i32, gen(i32, .{ .min = 1, .max = 10 }), struct {
         fn test_(n: i32) bool {
             return n > 0; // Always true for our range
         }
@@ -286,7 +283,7 @@ test "property with context-less hooks" {
 
 test "property test finds minimal failing example" {
     // Test a property that should fail for values < 10
-    const minimalFailingProperty = property_fn(i32, gen(i32, .{ .min = 0, .max = 1000 }), struct {
+    const minimalFailingProperty = property(i32, gen(i32, .{ .min = 0, .max = 1000 }), struct {
         fn test_(n: i32) bool {
             return n >= 10; // Fails for values < 10
         }
