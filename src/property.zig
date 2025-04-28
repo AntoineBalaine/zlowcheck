@@ -1,29 +1,38 @@
 const std = @import("std");
-const generator2 = @import("generator2.zig");
-const Generator = generator2.Generator;
-const Value = generator2.Value;
-const ValueList = generator2.ValueList;
+const Generator = @import("generator.zig").Generator;
+const FinitePrng = @import("byte_slice_prng.zig");
 
-/// Result of a property check
-pub const PropertyResult = struct {
-    /// Whether the property check passed
-    success: bool,
+/// Represents a failure found during property testing
+pub const PropertyFailure = struct {
+    /// Start offset in the original byte slice
+    start_offset: u32,
 
-    /// Counterexample if the property check failed
-    counterexample: ?*anyopaque,
+    /// End offset in the original byte slice
+    end_offset: u32,
 
-    /// Number of test cases that passed
-    num_passed: usize,
+    /// Number of shrinking steps performed
+    shrink_count: u32,
 
-    /// Number of test cases that were skipped (e.g., due to preconditions)
-    num_skipped: usize,
-
-    /// Number of shrinking steps performed (if any)
-    num_shrinks: usize,
-
-    /// Creation timestamp, useful for timing test duration
-    timestamp: i64,
+    pub fn len(self: @This()) u32 {
+        return self.end_offset - self.start_offset;
+    }
 };
+
+/// Represents a range in the original byte slice
+pub const ByteRange = struct {
+    start: u32,
+    end: u32,
+    pub fn len(self: @This()) u32 {
+        return self.end - self.start;
+    }
+};
+
+/// Calculate the maximum number of byte ranges needed for shrinking
+pub fn maxShrinkRanges(bytes_len: usize) usize {
+    if (bytes_len == 0) return 1;
+    const log_factor = std.math.log2_int(usize, bytes_len) + 1;
+    return log_factor * 3;
+}
 
 /// A property is a testable statement about inputs
 /// It combines a generator with a predicate function
@@ -128,7 +137,7 @@ pub fn Property(comptime T: type) type {
                     const ParamType = hookInfo.params[0].type.?;
 
                     if (ParamType != ContextType) {
-                        @compileError("Hook parameter type doesn't match context type");
+                        @compileError("Hook parameter type doesn't match the expected Context type");
                     }
                 } else {
                     @compileError("Hook function must take either 0 or 1 parameters");
@@ -159,121 +168,143 @@ pub fn Property(comptime T: type) type {
             return result;
         }
 
-        /// Run the property check for a specific number of iterations
-        pub fn check(self: Self, allocator: std.mem.Allocator, iterations: usize, seed: u64) !PropertyResult {
-            var prng = std.Random.DefaultPrng.init(seed);
-            const random = prng.random();
+        /// Managed version that handles allocation internally
+        pub fn check(self: Self, allocator: std.mem.Allocator, bytes: []const u8) !?PropertyFailure {
 
-            var result = PropertyResult{
-                .success = true,
-                .counterexample = null,
-                .num_passed = 0,
-                .num_skipped = 0,
-                .num_shrinks = 0,
-                .timestamp = std.time.milliTimestamp(),
-            };
+            // Ensure the input isn't too large for our range type
+            if (bytes.len > std.math.maxInt(u32)) {
+                return error.InputTooLarge;
+            }
 
-            // Run the test for the specified number of iterations
-            var iter: usize = 0;
-            while (iter < iterations) : (iter += 1) {
-                // Generate a test value
-                const test_value = try self.generator.generate(random, iter, allocator);
+            // Allocate a buffer for shrinking ranges
+            const buffer_size = maxShrinkRanges(bytes.len);
+            var range_buffer = try std.ArrayListUnmanaged(ByteRange).initCapacity(allocator, buffer_size);
+            defer range_buffer.deinit(allocator);
 
-                // Call the before hook if any
-                if (self.before_each_fn) |hookFn| {
-                    if (self.before_each_context) |ctx| {
-                        hookFn(ctx);
-                    } else {
-                        // For context-less hooks, we pass a dummy value
-                        var dummy: u8 = 0;
-                        hookFn(&dummy);
-                    }
+            // Call the unmanaged version with our allocated buffer
+            return try self.checkUnmanaged(allocator, bytes, &range_buffer);
+        }
+
+        /// Unmanaged version that uses a provided stack for shrinking
+        pub fn checkUnmanaged(self: Self, allocator: std.mem.Allocator, bytes: []const u8, stack: *std.ArrayListUnmanaged(ByteRange)) !?PropertyFailure {
+            // Ensure the input isn't too large for our range type
+            if (bytes.len > std.math.maxInt(u32)) {
+                return error.InputTooLarge;
+            }
+
+            if (try self.runWithBytes(allocator, bytes)) |failure| {
+                // Try to shrink the counterexample using the provided buffer
+
+                stack.appendAssumeCapacity(.{ .start = 0, .end = failure.end_offset });
+                if (try self.shrinkBytes(allocator, bytes[0..failure.end_offset], stack)) |shrunk_failure| {
+                    // Return the shrunk failure
+                    return shrunk_failure;
+                }
+                // If shrinking didn't work, return the original failure
+                return failure;
+            }
+            return null;
+        }
+
+        /// Shrink the byte sequence to find a minimal failing example
+        fn shrinkBytes(self: Self, allocator: std.mem.Allocator, bytes: []const u8, stack: *std.ArrayListUnmanaged(ByteRange)) !?PropertyFailure {
+            var result: ?PropertyFailure = null;
+
+            while (stack.pop()) |current| {
+                const current_len = current.len();
+                if (result) |res| {
+                    if (res.len() < current_len) continue;
                 }
 
-                // Run the predicate on the generated value
-                const predicate_result = self.predicate(test_value.value);
-
-                // Call the after hook if any
-                if (self.after_each_fn) |hookFn| {
-                    if (self.after_each_context) |ctx| {
-                        hookFn(ctx);
-                    } else {
-                        // For context-less hooks, we pass a dummy value
-                        var dummy: u8 = 0;
-                        hookFn(&dummy);
+                if (try self.runWithBytes(allocator, bytes[@intCast(current.start)..@intCast(current.end)])) |smaller_failure| {
+                    // Found a smaller failing input!
+                    if (result == null) {
+                        result = smaller_failure;
                     }
-                }
+                    result.?.start_offset = current.start + smaller_failure.start_offset;
+                    result.?.end_offset = current.start + smaller_failure.end_offset;
+                    result.?.shrink_count += 1;
 
-                if (!predicate_result) {
-                    // The predicate failed, we have a counterexample
-                    result.success = false;
-
-                    // Try to shrink the counterexample
-                    var simplified_value = test_value;
-                    var shrink_iterations: usize = 0;
-
-                    // Main shrinking loop
-                    var found_simpler = true;
-                    while (found_simpler) {
-                        found_simpler = false;
-
-                        // Get possible simplifications
-                        const shrinks = try self.generator.shrink(simplified_value.value, simplified_value.context, allocator);
-                        defer shrinks.deinit();
-
-                        // Find the first shrink that still fails the test
-                        for (shrinks.values) |shrink| {
-                            // Run the before hook if any
-                            if (self.before_each_fn) |hookFn| {
-                                if (self.before_each_context) |ctx| {
-                                    hookFn(ctx);
-                                } else {
-                                    // For context-less hooks, we pass a dummy value
-                                    var dummy: u8 = 0;
-                                    hookFn(&dummy);
-                                }
-                            }
-
-                            const shrink_result = self.predicate(shrink.value);
-
-                            // Run the after hook if any
-                            if (self.after_each_fn) |hookFn| {
-                                if (self.after_each_context) |ctx| {
-                                    hookFn(ctx);
-                                } else {
-                                    // For context-less hooks, we pass a dummy value
-                                    var dummy: u8 = 0;
-                                    hookFn(&dummy);
-                                }
-                            }
-
-                            if (!shrink_result) {
-                                // Found a simpler failing case
-                                simplified_value.deinit(allocator);
-
-                                // Create a copy of the shrunk value
-                                simplified_value = shrink;
-                                shrink_iterations += 1;
-                                found_simpler = true;
-                                break;
-                            }
-                        }
+                    // If we're down to 1 byte, we can't do better
+                    if (result.?.len() <= 1) {
+                        break;
                     }
 
-                    // Store the counterexample and shrink count
-                    result.counterexample = @as(*anyopaque, @ptrCast(&simplified_value.value));
-                    result.num_shrinks = shrink_iterations;
+                    // Add the halves to the stack (in reverse order so we try the first half first)
+                    const mid_point = current.start + (current_len / 2);
 
-                    // Exit early since we found a failing case
-                    return result;
+                    // Second half
+                    if (mid_point < current.end) {
+                        stack.appendAssumeCapacity(.{ .start = mid_point, .end = current.end });
+                    }
+
+                    // First half
+                    if (mid_point > current.start) {
+                        stack.appendAssumeCapacity(.{ .start = @intCast(current.start), .end = @intCast(mid_point) });
+                    }
+
+                    // Also try removing the first and last bytes
+                    if (current_len > 1) {
+                        stack.appendAssumeCapacity(.{ .start = @intCast(current.start + 1), .end = @intCast(current.end) });
+
+                        stack.appendAssumeCapacity(.{ .start = @intCast(current.start), .end = @intCast(current.end - 1) });
+                    }
                 }
-
-                // If the predicate passed, clean up and increment the counter
-                test_value.deinit(allocator);
-                result.num_passed += 1;
             }
 
             return result;
+        }
+
+        /// Run the property with a specific byte sequence
+        fn runWithBytes(self: Self, allocator: std.mem.Allocator, bytes: []const u8) !?PropertyFailure {
+            var finite_prng = FinitePrng.init(bytes);
+            var random = finite_prng.random();
+
+            // Generate a test value
+            const test_value = try self.generator.generate(&random, allocator);
+
+            // Run hooks and predicate
+            self.runBeforeHook();
+            defer self.runAfterHook();
+
+            const predicate_result = self.predicate(test_value);
+
+            if (!predicate_result) {
+                // Test failed! Return information about the failure
+                const bytes_used_len = @as(u32, @truncate(finite_prng.fixed_buffer.pos));
+                return PropertyFailure{
+                    .start_offset = 0,
+                    .end_offset = bytes_used_len,
+                    .shrink_count = 0,
+                };
+            }
+
+            // Test passed
+            return null;
+        }
+
+        /// Run the before hook if any
+        fn runBeforeHook(self: Self) void {
+            if (self.before_each_fn) |hookFn| {
+                if (self.before_each_context) |ctx| {
+                    hookFn(ctx);
+                } else {
+                    var dummy: u8 = 0;
+                    hookFn(&dummy);
+                }
+            }
+        }
+
+        /// Run the after hook if any
+        fn runAfterHook(self: Self) void {
+            if (self.after_each_fn) |hookFn| {
+                if (self.after_each_context) |ctx| {
+                    hookFn(ctx);
+                } else {
+                    var dummy: u8 = 0;
+                    hookFn(&dummy);
+                }
+            }
         }
     };
 }
@@ -281,13 +312,4 @@ pub fn Property(comptime T: type) type {
 /// Create a property that checks a condition on generated values
 pub fn property(comptime T: type, generator: Generator(T), predicate: fn (T) bool) Property(T) {
     return Property(T).init(generator, predicate);
-}
-
-/// Create a property for a tuple of generated values
-pub fn tupleProperty(comptime Tuple: type, generators: anytype, predicate: fn (Tuple) bool) !Property(Tuple) {
-    _ = generators;
-    _ = predicate;
-    // We would implement a way to create a tuple generator from multiple generators
-    // For now, this is a placeholder
-    @compileError("tupleProperty not yet implemented");
 }

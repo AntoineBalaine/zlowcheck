@@ -1,5 +1,5 @@
 const std = @import("std");
-const property = @import("property.zig");
+const property = @import("property2.zig");
 const generator2 = @import("generator2.zig");
 const Property = property.Property;
 const PropertyResult = property.PropertyResult;
