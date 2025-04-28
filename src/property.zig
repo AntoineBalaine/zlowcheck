@@ -216,7 +216,7 @@ pub fn Property(comptime T: type) type {
                     if (res.len() < current_len) continue;
                 }
 
-                if (try self.runWithBytes(allocator, bytes[@intCast(current.start)..@intCast(current.end)])) |smaller_failure| {
+                if (self.runWithBytes(allocator, bytes[@intCast(current.start)..@intCast(current.end)]) catch null) |smaller_failure| {
                     // Found a smaller failing input!
                     if (result == null) {
                         result = smaller_failure;

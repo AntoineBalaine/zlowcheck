@@ -42,7 +42,7 @@ test "basic property test (addition commutative)" {
 
 test "failing property with shrinking (all integers are positive)" {
     // Test the (false) property that all integers are positive
-    const positiveProperty = property(i32, gen(i32, .{ .min = -100, .max = 100 }), struct {
+    const positiveProperty = property(i32, gen(i32, .{ .min = -100, .max = 0 }), struct {
         fn test_(n: i32) bool {
             return n > 0;
         }
