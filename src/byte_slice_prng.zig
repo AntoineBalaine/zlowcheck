@@ -185,16 +185,15 @@ pub const FiniteRandom = struct {
     }
 
     pub fn intRangeAtMost(self: *@This(), comptime T: type, at_least: T, at_most: T) !T {
-        if (at_most == std.math.maxInt(T)) {
-            // Special case for maximum value to avoid overflow
-            if (at_least == at_most) return at_least;
-
-            // Generate a value in [at_least, at_most]
-            const range = at_most - at_least;
-
-            const UT = std.meta.Int(.unsigned, @typeInfo(T).int.bits);
-            const unsigned_result = try self.uintLessThan(UT, @intCast(range));
-            return at_least + @as(T, @intCast(unsigned_result));
+        assert(at_least <= at_most);
+        const info = @typeInfo(T).int;
+        if (info.signedness == .signed) {
+            // Two's complement makes this math pretty easy.
+            const UnsignedT = std.meta.Int(.unsigned, info.bits);
+            const lo: UnsignedT = @bitCast(at_least);
+            const hi: UnsignedT = @bitCast(at_most);
+            const result = lo +% try self.uintAtMost(UnsignedT, hi -% lo);
+            return @bitCast(result);
         } else {
             return try self.intRangeLessThan(T, at_least, at_most + 1);
         }

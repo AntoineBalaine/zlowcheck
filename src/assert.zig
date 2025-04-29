@@ -38,9 +38,7 @@ pub fn assert(
     };
 
     // Free the bytes if we generated them
-    if (!using_provided_bytes) {
-        defer allocator.free(bytes);
-    }
+    defer if (!using_provided_bytes) allocator.free(bytes);
 
     // Run the property check
     const failure_opt = try prop.check(allocator, bytes);
