@@ -121,6 +121,28 @@ pub const FiniteRandom = struct {
         return values[@as(MinInt, @intCast(index))];
     }
 
+    /// Returns the type used for enum weights.
+    pub fn EnumWeightsType(E: type) type {
+        return std.enums.EnumFieldStruct(E, u64, null);
+    }
+
+    /// Returns a random value of an enum, where probability is proportional to weight.
+    pub fn enumWeighted(self: *@This(), comptime Enum: type, weights: EnumWeightsType(Enum)) !Enum {
+        const fields = @typeInfo(Enum).Enum.fields;
+        var total: u64 = 0;
+        inline for (fields) |field| {
+            total += @field(weights, field.name);
+        }
+        assert(total > 0);
+        var pick = try self.uintLessThan(u64, total);
+        inline for (fields) |field| {
+            const weight = @field(weights, field.name);
+            if (pick < weight) return @as(Enum, @enumFromInt(field.value));
+            pick -= weight;
+        }
+        unreachable;
+    }
+
     pub fn int(self: *@This(), comptime T: type) !T {
         const bits = @typeInfo(T).int.bits;
         const UnsignedT = std.meta.Int(.unsigned, bits);

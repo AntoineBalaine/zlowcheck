@@ -368,3 +368,23 @@ test "FinitePrng random() method creates a fresh reader" {
     try testing.expectEqual(@as(u8, 0x12), try rand2.int(u8));
     try testing.expectEqual(@as(u8, 0x34), try rand2.int(u8));
 }
+
+test "enumWeighted" {
+    const E = enum(u8) { a, b, c = 8 }; // 8 tests that the discriminant is used properly.
+
+    // Use a fixed set of bytes for deterministic testing
+    const bytes_ = [_]u8{ 0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0 } ** 32;
+    var prng = FinitePrng.init(&bytes_);
+    var rand = prng.random();
+
+    var count: struct { a: u32 = 0, b: u32 = 0, c: u32 = 0 } = .{};
+    for (0..100) |_| {
+        switch (try rand.enumWeighted(E, .{ .a = 0, .b = 1, .c = 2 })) {
+            inline else => |tag| @field(count, @tagName(tag)) += 1,
+        }
+    }
+
+    try std.testing.expectEqual(@as(u32, 0), count.a);
+    try std.testing.expect(count.b < count.c);
+    try std.testing.expectEqual(@as(u32, 0) + count.b + count.c, 100);
+}
