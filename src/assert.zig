@@ -24,7 +24,7 @@ pub fn assert(
     prop: Property(T),
     config: AssertConfig,
     allocator: std.mem.Allocator,
-) !void {
+) !?PropertyFailure {
     // Determine if we're using provided bytes or generating random ones
     const using_provided_bytes = config.bytes != null;
     const bytes = if (using_provided_bytes)
@@ -43,14 +43,6 @@ pub fn assert(
     // Run the property check
     const failure_opt = try prop.check(allocator, bytes);
 
-    // If the property passed, we're done
-    if (failure_opt == null) {
-        if (config.verbose) {
-            std.debug.print("✅ Property passed\n", .{});
-        }
-        return;
-    }
-
     // Property failed - extract the counterexample
     if (failure_opt) |failure| {
         // Regenerate the counterexample using the same bytes that caused the failure
@@ -66,6 +58,7 @@ pub fn assert(
         try stderr.print("Counterexample: {any}\n", .{example});
         try stderr.print("Found after {} shrinking steps\n", .{failure.shrink_count});
 
-        return error.PropertyTestFailed;
+        return failure;
     }
+    return null;
 }
