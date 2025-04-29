@@ -11,6 +11,7 @@ const maxInt = std.math.maxInt;
 const BitReader = @import("bitreader_std.zig");
 
 const FinitePrng = @This();
+
 bytes_: []const u8,
 fixed_buffer: std.io.FixedBufferStream([]const u8),
 bit_reader: BitReader.BitReader(.big),
@@ -45,6 +46,44 @@ pub fn random(self: *FinitePrng) FiniteRandom {
         .reader = self.fixed_buffer.reader(),
     };
 }
+
+/// Lifted from Tigerbeetle’s PRNG
+/// A less than one rational number, used to specify probabilities.
+pub const Ratio = struct {
+    // Invariant: numerator ≤ denominator.
+    numerator: u64,
+    // Invariant: denominator ≠ 0.
+    denominator: u64,
+
+    pub fn format(
+        r: Ratio,
+        comptime fmt: []const u8,
+        writer: anytype,
+    ) !void {
+        _ = fmt;
+        return writer.print("{d}/{d}", .{ r.numerator, r.denominator });
+    }
+
+    pub fn parse_flag_value(value: []const u8) union(enum) { ok: Ratio, err: []const u8 } {
+        const numerator_string, const denominator_string = std.mem.split(value, "/") orelse
+            return .{ .err = "expected 'a/b' ratio, but found:" };
+
+        const numerator = std.fmt.parseInt(u64, numerator_string, 16) catch
+            return .{ .err = "invalid numerator:" };
+        const denominator = std.fmt.parseInt(u64, denominator_string, 16) catch
+            return .{ .err = "invalid denominator:" };
+        if (numerator > denominator) {
+            return .{ .err = "ratio greater than 1:" };
+        }
+        return .{ .ok = ratio(numerator, denominator) };
+    }
+
+    fn ratio(numerator: u64, denominator: u64) Ratio {
+        assert(denominator > 0);
+        assert(numerator <= denominator);
+        return .{ .numerator = numerator, .denominator = denominator };
+    }
+};
 
 /// The random API, with modified signatures to return errors.
 /// Will error once it runs out of data.
@@ -283,6 +322,27 @@ pub const FiniteRandom = struct {
 
         // Fallback (should never happen unless sum calculation had rounding errors)
         return proportions.len - 1;
+    }
+
+    /// lifted from Tigerbeetle’s PRNG
+    pub fn chance(self: *@This(), probability: Ratio) !bool {
+        assert(probability.denominator > 0);
+        assert(probability.numerator <= probability.denominator);
+        return try self.uintLessThan(u64, probability.denominator) < probability.numerator;
+    }
+
+    test chance {
+        // Use a fixed set of bytes for deterministic testing
+        const bytes_ = [_]u8{ 0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0 } ** 16;
+        var prng = FinitePrng.init(&bytes_);
+        var rand = prng.random();
+
+        var balance: i32 = 0;
+        for (0..1000) |_| {
+            if (try rand.chance(.ratio(2, 7))) balance += 1 else balance -= 1;
+            if (try rand.chance(.ratio(5, 7))) balance += 1 else balance -= 1;
+        }
+        try std.testing.expect(balance != 0);
     }
 };
 
