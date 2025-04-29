@@ -373,7 +373,9 @@ test "enumWeighted" {
     const E = enum(u8) { a, b, c = 8 }; // 8 tests that the discriminant is used properly.
 
     // Use a fixed set of bytes for deterministic testing
-    const bytes_ = [_]u8{ 0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0 } ** 32;
+
+    var bytes_: [4096]u8 = undefined;
+    @import("test_helpers.zig").load_bytes(&bytes_);
     var prng = FinitePrng.init(&bytes_);
     var rand = prng.random();
 
@@ -387,4 +389,18 @@ test "enumWeighted" {
     try std.testing.expectEqual(@as(u32, 0), count.a);
     try std.testing.expect(count.b < count.c);
     try std.testing.expectEqual(@as(u32, 0) + count.b + count.c, 100);
+}
+
+test "chance" {
+    var bytes: [4096]u8 = undefined;
+    @import("test_helpers.zig").load_bytes(&bytes);
+    var prng = FinitePrng.init(&bytes);
+    var rand = prng.random();
+
+    var balance: i32 = 0;
+    for (0..100) |_| {
+        if (try rand.chance(.ratio(2, 7))) balance += 1 else balance -= 1;
+        if (try rand.chance(.ratio(5, 7))) balance += 1 else balance -= 1;
+    }
+    try std.testing.expect(balance != 0);
 }

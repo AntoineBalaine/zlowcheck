@@ -78,7 +78,7 @@ pub const Ratio = struct {
         return .{ .ok = ratio(numerator, denominator) };
     }
 
-    fn ratio(numerator: u64, denominator: u64) Ratio {
+    pub fn ratio(numerator: u64, denominator: u64) Ratio {
         assert(denominator > 0);
         assert(numerator <= denominator);
         return .{ .numerator = numerator, .denominator = denominator };
@@ -128,7 +128,7 @@ pub const FiniteRandom = struct {
 
     /// Returns a random value of an enum, where probability is proportional to weight.
     pub fn enumWeighted(self: *@This(), comptime Enum: type, weights: EnumWeightsType(Enum)) !Enum {
-        const fields = @typeInfo(Enum).Enum.fields;
+        const fields = @typeInfo(Enum).@"enum".fields;
         var total: u64 = 0;
         inline for (fields) |field| {
             total += @field(weights, field.name);
@@ -256,6 +256,9 @@ pub const FiniteRandom = struct {
             const result = lo +% try self.uintAtMost(UnsignedT, hi -% lo);
             return @bitCast(result);
         } else {
+            if (at_most == std.math.maxInt(T)) {
+                return self.int(T);
+            }
             return try self.intRangeLessThan(T, at_least, at_most + 1);
         }
     }
@@ -351,20 +354,6 @@ pub const FiniteRandom = struct {
         assert(probability.denominator > 0);
         assert(probability.numerator <= probability.denominator);
         return try self.uintLessThan(u64, probability.denominator) < probability.numerator;
-    }
-
-    test chance {
-        // Use a fixed set of bytes for deterministic testing
-        const bytes_ = [_]u8{ 0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0 } ** 16;
-        var prng = FinitePrng.init(&bytes_);
-        var rand = prng.random();
-
-        var balance: i32 = 0;
-        for (0..1000) |_| {
-            if (try rand.chance(.ratio(2, 7))) balance += 1 else balance -= 1;
-            if (try rand.chance(.ratio(5, 7))) balance += 1 else balance -= 1;
-        }
-        try std.testing.expect(balance != 0);
     }
 };
 
