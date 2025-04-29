@@ -685,7 +685,7 @@ test "optional generator produces both null and values" {
     // Create a generator for optional integers
     const optIntGenerator = gen(?i32, .{
         .child_config = .{ .min = 1, .max = 100 },
-        .null_probability = 0.5, // 50% chance of null
+        .null_ratio = .{ .numerator = 1, .denominator = 2 }, // 50% chance of null
     });
 
     var bytes: [4096]u8 = undefined;
@@ -723,12 +723,12 @@ test "optional generator with custom null probability" {
     // Create generators with different null probabilities
     const rareNullGen = gen(?i32, .{
         .child_config = .{ .min = 1, .max = 100 },
-        .null_probability = 0.1, // 10% chance of null
+        .null_ratio = .{ .numerator = 1, .denominator = 10 }, // 10% chance of null
     });
 
     const frequentNullGen = gen(?i32, .{
         .child_config = .{ .min = 1, .max = 100 },
-        .null_probability = 0.9, // 90% chance of null
+        .null_ratio = .{ .numerator = 9, .denominator = 10 }, // 90% chance of null
     });
 
     var bytes: [4096]u8 = undefined;
@@ -1272,7 +1272,7 @@ test "oneOf respects weights" {
     }.alwaysFalse);
 
     // Create a heavily weighted generator that should mostly produce true
-    const weights = [_]f32{ 0.9, 0.1 }; // 90% true, 10% false
+    const weights = [_]u64{ 90, 10 }; // 90% true, 10% false
     const weightedGen = oneOf(.{ trueGen, falseGen }, &weights);
 
     var bytes: [4096]u8 = undefined;
