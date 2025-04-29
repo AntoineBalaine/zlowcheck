@@ -1,7 +1,8 @@
 const std = @import("std");
-const property = @import("property.zig");
-const Property = property.Property;
-const PropertyFailure = property.PropertyFailure;
+const property_mod = @import("property.zig");
+const property = property_mod.property;
+const Property = property_mod.Property;
+const PropertyFailure = property_mod.PropertyFailure;
 
 /// Configuration for property assertions
 pub const AssertConfig = struct {

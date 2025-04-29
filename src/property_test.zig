@@ -6,16 +6,9 @@ const Property = property_mod.Property;
 const PropertyFailure = property_mod.PropertyFailure;
 const ByteRange = property_mod.ByteRange;
 const ByteSlicePrng = @import("byte_slice_prng.zig");
-
+const load_bytes = @import("test_helpers.zig").load_bytes;
 const gen = generator.gen;
 const Generator = generator.Generator;
-
-fn load_bytes(buf: []u8) void {
-    const current_time = std.time.milliTimestamp();
-    var std_prng = std.Random.DefaultPrng.init(@intCast(current_time));
-    var std_random = std_prng.random();
-    std_random.bytes(buf);
-}
 
 test "basic property test (addition commutative)" {
     // Test the commutative property of addition: a + b == b + a

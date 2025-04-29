@@ -5,13 +5,7 @@ const gen = generator.gen;
 const tuple = generator.tuple;
 const oneOf = generator.oneOf;
 const FinitePrng = @import("byte_slice_prng.zig");
-
-fn load_bytes(buf: []u8) void {
-    const current_time = std.time.milliTimestamp();
-    var std_prng = std.Random.DefaultPrng.init(@intCast(current_time));
-    var std_random = std_prng.random();
-    std_random.bytes(buf);
-}
+const load_bytes = @import("test_helpers.zig").load_bytes;
 
 test "int generator produces values within range" {
     // Create a generator for integers between 10 and 20
