@@ -24,15 +24,45 @@ pub const PropertyResult = struct {
 
     /// Creation timestamp, useful for timing test duration
     timestamp: i64,
-    
+
     /// The byte sequence that produced the failure
     failure_bytes: ?[]const u8,
-    
+
     /// Start offset in the original byte slice
     byte_start: ?u32,
-    
+
     /// End offset in the original byte slice (bytes used)
     byte_end: ?u32,
+
+    /// Format the failure bytes as a hex string for easy copy/paste into test cases
+    /// Returns a string that needs to be freed by the caller
+    pub fn formatFailureBytes(self: PropertyResult, allocator: std.mem.Allocator) !?[]const u8 {
+        if (self.failure_bytes == null) return null;
+
+        var buffer = std.ArrayList(u8).init(allocator);
+        defer buffer.deinit();
+
+        try buffer.appendSlice("// Failure bytes as hex:\n// var bytes = [_]u8{ ");
+
+        for (self.failure_bytes.?, 0..) |b, i| {
+            // Format each byte as 0xXX
+            try std.fmt.format(buffer.writer(), "0x{x:0>2}", .{b});
+
+            // Add comma separator except for the last element
+            if (i < self.failure_bytes.?.len - 1) {
+                try buffer.appendSlice(", ");
+            }
+
+            // Add line break for readability every 8 bytes
+            if ((i + 1) % 8 == 0 and i < self.failure_bytes.?.len - 1) {
+                try buffer.appendSlice("\n//     ");
+            }
+        }
+
+        try buffer.appendSlice(" };");
+
+        return try buffer.toOwnedSlice();
+    }
 };
 
 /// A property is a testable statement about inputs
@@ -170,7 +200,7 @@ pub fn Property(comptime T: type) type {
         }
 
         /// Run the property check using a byte slice as the randomness source
-        /// 
+        ///
         /// Errors:
         /// - OutOfMemory: If memory allocation fails
         /// - OutOfEntropy: If the input byte slice doesn't contain enough randomness
@@ -223,7 +253,7 @@ pub fn Property(comptime T: type) type {
             if (!predicate_result) {
                 // The predicate failed, we have a counterexample
                 result.success = false;
-                
+
                 // Save the original byte position that produced the failure
                 // This is critical for reproducing the test failure
                 if (test_value.byte_pos) |pos| {
@@ -281,7 +311,7 @@ pub fn Property(comptime T: type) type {
                             simplified_value = shrink;
                             shrink_iterations += 1;
                             found_simpler = true;
-                            
+
                             // Note: shrunk values don't always have meaningful byte positions
                             // but we keep the original byte range that led to the failure
                             break;
