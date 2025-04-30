@@ -1,4 +1,5 @@
 const std = @import("std");
+const FinitePrng = @import("byte_slice_prng.zig");
 
 /// Value wrapper that stores both a generated value and its associated context
 /// The context is crucial for effective shrinking:
@@ -18,21 +19,37 @@ pub fn Value(comptime T: type) type {
         /// This is called when the value is no longer needed
         context_deinit: ?*const fn (?*anyopaque, std.mem.Allocator) void,
 
+        /// Start offset in the original byte slice
+        byte_start: u32,
+        
+        /// End offset in the original byte slice (bytes used)
+        byte_end: u32,
+
         /// Initialize a new Value with a given value and context
-        pub fn init(value: T, context: ?*anyopaque, context_deinit: ?*const fn (?*anyopaque, std.mem.Allocator) void) Self {
+        pub fn init(
+            value: T, 
+            context: ?*anyopaque, 
+            context_deinit: ?*const fn (?*anyopaque, std.mem.Allocator) void,
+            byte_start: u32,
+            byte_end: u32
+        ) Self {
             return .{
                 .value = value,
                 .context = context,
                 .context_deinit = context_deinit,
+                .byte_start = byte_start,
+                .byte_end = byte_end,
             };
         }
 
         /// Initialize a value with no context
-        pub fn initNoContext(value: T) Self {
+        pub fn initNoContext(value: T, byte_start: u32, byte_end: u32) Self {
             return .{
                 .value = value,
                 .context = null,
                 .context_deinit = null,
+                .byte_start = byte_start,
+                .byte_end = byte_end,
             };
         }
 
@@ -41,6 +58,16 @@ pub fn Value(comptime T: type) type {
             if (self.context != null and self.context_deinit != null) {
                 self.context_deinit.?(self.context, allocator);
             }
+        }
+        
+        /// Get the byte slice that generated this value
+        pub fn bytes(self: Self, original_bytes: []const u8) []const u8 {
+            return original_bytes[self.byte_start..self.byte_end];
+        }
+        
+        /// Returns the number of bytes used to generate this value
+        pub fn byteLength(self: Self) u32 {
+            return self.byte_end - self.byte_start;
         }
     };
 }
@@ -70,7 +97,9 @@ pub fn tuple(comptime generators: anytype) blk: {
         .generateFn = struct {
             const Generators = generators;
 
-            fn generate(random: std.Random, size: usize, allocator: std.mem.Allocator) error{OutOfMemory}!Value(TupleType) {
+            fn generate(random: *FinitePrng.FiniteRandom, allocator: std.mem.Allocator) error{ OutOfMemory, OutOfEntropy }!Value(TupleType) {
+                const start_pos = random.prng.fixed_buffer.pos;
+                
                 // Create a tuple context
                 const TupleContext = struct {
                     // Dynamic array to hold element contexts
@@ -110,7 +139,7 @@ pub fn tuple(comptime generators: anytype) blk: {
 
                 inline for (std.meta.fields(@TypeOf(Generators)), 0..) |field, i| {
                     const genrt = @field(Generators, field.name);
-                    const element_value = try genrt.generate(random, size, allocator);
+                    const element_value = try genrt.generate(random, allocator);
                     result[i] = element_value.value;
 
                     // Store the context if any
@@ -122,11 +151,15 @@ pub fn tuple(comptime generators: anytype) blk: {
                         try context.element_deinits.append(null);
                     }
                 }
+                
+                const end_pos = random.prng.fixed_buffer.pos;
 
                 return Value(TupleType).init(
                     result,
                     @as(*anyopaque, @ptrCast(context)),
                     TupleContext.deinit,
+                    @intCast(start_pos),
+                    @intCast(end_pos)
                 );
             }
         }.generate,
@@ -252,11 +285,11 @@ pub fn oneOf(comptime generators: anytype, comptime weights: ?[]const f32) blk: 
             const Generators = generators;
             const Weights = weights;
 
-            fn weightedChoice(rand: std.Random, weights_slice: []const f32) usize {
+            fn weightedChoice(rand: *FinitePrng.FiniteRandom, weights_slice: []const f32) !usize {
                 var total: f32 = 0;
                 for (weights_slice) |w| total += w;
 
-                const r = rand.float(f32) * total;
+                const r = try rand.floatNorm(f32) * total;
                 var cumulative: f32 = 0;
 
                 for (weights_slice, 0..) |w, i| {
@@ -267,11 +300,13 @@ pub fn oneOf(comptime generators: anytype, comptime weights: ?[]const f32) blk: 
                 return weights_slice.len - 1;
             }
 
-            fn generate(random: std.Random, size: usize, allocator: std.mem.Allocator) error{OutOfMemory}!Value(T) {
+            fn generate(random: *FinitePrng.FiniteRandom, allocator: std.mem.Allocator) error{ OutOfMemory, OutOfEntropy }!Value(T) {
+                const start_pos = random.prng.fixed_buffer.pos;
+                
                 const idx = if (Weights) |w|
-                    weightedChoice(random, w)
+                    try weightedChoice(random, w)
                 else
-                    random.uintLessThan(usize, Generators.len);
+                    try random.uintLessThan(usize, Generators.len);
 
                 // Use inline for to handle each generator at compile time
                 inline for (Generators, 0..) |genr, i| {
@@ -298,7 +333,8 @@ pub fn oneOf(comptime generators: anytype, comptime weights: ?[]const f32) blk: 
                         };
 
                         // Generate the value
-                        const value = try genr.generate(random, size, allocator);
+                        const value = try genr.generate(random, allocator);
+                        const end_pos = random.prng.fixed_buffer.pos;
 
                         // Create the context
                         const context = try allocator.create(OneOfContext);
@@ -312,6 +348,8 @@ pub fn oneOf(comptime generators: anytype, comptime weights: ?[]const f32) blk: 
                             value.value,
                             @as(*anyopaque, @ptrCast(context)),
                             OneOfContext.deinit,
+                            @intCast(start_pos),
+                            @intCast(end_pos)
                         );
                     }
                 }
@@ -452,7 +490,7 @@ pub fn Generator(comptime T: type) type {
         pub const ValueType = T;
 
         /// Function that generates values with context
-        generateFn: *const fn (random: std.Random, size: usize, allocator: std.mem.Allocator) error{OutOfMemory}!Value(T),
+        generateFn: *const fn (random: *FinitePrng.FiniteRandom, allocator: std.mem.Allocator) error{ OutOfMemory, OutOfEntropy }!Value(T),
 
         /// Function that shrinks values using their context
         shrinkFn: *const fn (value: T, context: ?*anyopaque, allocator: std.mem.Allocator) error{OutOfMemory}!ValueList(T),
@@ -461,8 +499,12 @@ pub fn Generator(comptime T: type) type {
         canShrinkWithoutContextFn: *const fn (value: T) bool,
 
         /// Generate a value with its context
-        pub fn generate(self: Self, random: std.Random, size: usize, allocator: std.mem.Allocator) error{OutOfMemory}!Value(T) {
-            return self.generateFn(random, size, allocator);
+        /// 
+        /// Errors:
+        /// - OutOfMemory: If memory allocation fails
+        /// - OutOfEntropy: If the PRNG runs out of random data
+        pub fn generate(self: Self, random: *FinitePrng.FiniteRandom, allocator: std.mem.Allocator) error{ OutOfMemory, OutOfEntropy }!Value(T) {
+            return self.generateFn(random, allocator);
         }
 
         /// Shrink a value using its context

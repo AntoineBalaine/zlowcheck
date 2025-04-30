@@ -3,6 +3,7 @@ const generator2 = @import("generator2.zig");
 const Generator = generator2.Generator;
 const Value = generator2.Value;
 const ValueList = generator2.ValueList;
+const FinitePrng = @import("byte_slice_prng.zig");
 
 /// Result of a property check
 pub const PropertyResult = struct {
@@ -23,6 +24,15 @@ pub const PropertyResult = struct {
 
     /// Creation timestamp, useful for timing test duration
     timestamp: i64,
+    
+    /// The byte sequence that produced the failure
+    failure_bytes: ?[]const u8,
+    
+    /// Start offset in the original byte slice
+    byte_start: ?u32,
+    
+    /// End offset in the original byte slice (bytes used)
+    byte_end: ?u32,
 };
 
 /// A property is a testable statement about inputs
@@ -159,11 +169,13 @@ pub fn Property(comptime T: type) type {
             return result;
         }
 
-        /// Run the property check for a specific number of iterations
-        pub fn check(self: Self, allocator: std.mem.Allocator, iterations: usize, seed: u64) !PropertyResult {
-            var prng = std.Random.DefaultPrng.init(seed);
-            const random = prng.random();
-
+        /// Run the property check using a byte slice as the randomness source
+        /// 
+        /// Errors:
+        /// - OutOfMemory: If memory allocation fails
+        /// - OutOfEntropy: If the input byte slice doesn't contain enough randomness
+        pub fn check(self: Self, allocator: std.mem.Allocator, bytes: []const u8) error{ OutOfMemory, OutOfEntropy }!PropertyResult {
+            // Initialize the PropertyResult
             var result = PropertyResult{
                 .success = true,
                 .counterexample = null,
@@ -171,107 +183,116 @@ pub fn Property(comptime T: type) type {
                 .num_skipped = 0,
                 .num_shrinks = 0,
                 .timestamp = std.time.milliTimestamp(),
+                .failure_bytes = null,
+                .byte_start = null,
+                .byte_end = null,
             };
 
-            // Run the test for the specified number of iterations
-            var iter: usize = 0;
-            while (iter < iterations) : (iter += 1) {
-                // Generate a test value
-                const test_value = try self.generator.generate(random, iter, allocator);
+            // Create a finite PRNG from the byte slice
+            var prng = FinitePrng.init(bytes);
+            var random = prng.random();
 
-                // Call the before hook if any
-                if (self.before_each_fn) |hookFn| {
-                    if (self.before_each_context) |ctx| {
-                        hookFn(ctx);
-                    } else {
-                        // For context-less hooks, we pass a dummy value
-                        var dummy: u8 = 0;
-                        hookFn(&dummy);
-                    }
+            // Generate a test value
+            const test_value = try self.generator.generate(&random, allocator);
+
+            // Call the before hook if any
+            if (self.before_each_fn) |hookFn| {
+                if (self.before_each_context) |ctx| {
+                    hookFn(ctx);
+                } else {
+                    // For context-less hooks, we pass a dummy value
+                    var dummy: u8 = 0;
+                    hookFn(&dummy);
                 }
+            }
 
-                // Run the predicate on the generated value
-                const predicate_result = self.predicate(test_value.value);
+            // Run the predicate on the generated value
+            const predicate_result = self.predicate(test_value.value);
 
-                // Call the after hook if any
-                if (self.after_each_fn) |hookFn| {
-                    if (self.after_each_context) |ctx| {
-                        hookFn(ctx);
-                    } else {
-                        // For context-less hooks, we pass a dummy value
-                        var dummy: u8 = 0;
-                        hookFn(&dummy);
-                    }
+            // Call the after hook if any
+            if (self.after_each_fn) |hookFn| {
+                if (self.after_each_context) |ctx| {
+                    hookFn(ctx);
+                } else {
+                    // For context-less hooks, we pass a dummy value
+                    var dummy: u8 = 0;
+                    hookFn(&dummy);
                 }
+            }
 
-                if (!predicate_result) {
-                    // The predicate failed, we have a counterexample
-                    result.success = false;
+            if (!predicate_result) {
+                // The predicate failed, we have a counterexample
+                result.success = false;
+                result.byte_start = test_value.byte_start;
+                result.byte_end = test_value.byte_end;
+                result.failure_bytes = bytes[test_value.byte_start..test_value.byte_end];
 
-                    // Try to shrink the counterexample
-                    var simplified_value = test_value;
-                    var shrink_iterations: usize = 0;
+                // Try to shrink the counterexample
+                var simplified_value = test_value;
+                var shrink_iterations: usize = 0;
 
-                    // Main shrinking loop
-                    var found_simpler = true;
-                    while (found_simpler) {
-                        found_simpler = false;
+                // Main shrinking loop
+                var found_simpler = true;
+                while (found_simpler) {
+                    found_simpler = false;
 
-                        // Get possible simplifications
-                        const shrinks = try self.generator.shrink(simplified_value.value, simplified_value.context, allocator);
-                        defer shrinks.deinit();
+                    // Get possible simplifications
+                    const shrinks = try self.generator.shrink(simplified_value.value, simplified_value.context, allocator);
+                    defer shrinks.deinit();
 
-                        // Find the first shrink that still fails the test
-                        for (shrinks.values) |shrink| {
-                            // Run the before hook if any
-                            if (self.before_each_fn) |hookFn| {
-                                if (self.before_each_context) |ctx| {
-                                    hookFn(ctx);
-                                } else {
-                                    // For context-less hooks, we pass a dummy value
-                                    var dummy: u8 = 0;
-                                    hookFn(&dummy);
-                                }
-                            }
-
-                            const shrink_result = self.predicate(shrink.value);
-
-                            // Run the after hook if any
-                            if (self.after_each_fn) |hookFn| {
-                                if (self.after_each_context) |ctx| {
-                                    hookFn(ctx);
-                                } else {
-                                    // For context-less hooks, we pass a dummy value
-                                    var dummy: u8 = 0;
-                                    hookFn(&dummy);
-                                }
-                            }
-
-                            if (!shrink_result) {
-                                // Found a simpler failing case
-                                simplified_value.deinit(allocator);
-
-                                // Create a copy of the shrunk value
-                                simplified_value = shrink;
-                                shrink_iterations += 1;
-                                found_simpler = true;
-                                break;
+                    // Find the first shrink that still fails the test
+                    for (shrinks.values) |shrink| {
+                        // Run the before hook if any
+                        if (self.before_each_fn) |hookFn| {
+                            if (self.before_each_context) |ctx| {
+                                hookFn(ctx);
+                            } else {
+                                // For context-less hooks, we pass a dummy value
+                                var dummy: u8 = 0;
+                                hookFn(&dummy);
                             }
                         }
+
+                        const shrink_result = self.predicate(shrink.value);
+
+                        // Run the after hook if any
+                        if (self.after_each_fn) |hookFn| {
+                            if (self.after_each_context) |ctx| {
+                                hookFn(ctx);
+                            } else {
+                                // For context-less hooks, we pass a dummy value
+                                var dummy: u8 = 0;
+                                hookFn(&dummy);
+                            }
+                        }
+
+                        if (!shrink_result) {
+                            // Found a simpler failing case
+                            simplified_value.deinit(allocator);
+
+                            // Create a copy of the shrunk value
+                            simplified_value = shrink;
+                            shrink_iterations += 1;
+                            found_simpler = true;
+                            
+                            // Note: shrunk values don't always have meaningful byte positions
+                            // but we keep the original byte range that led to the failure
+                            break;
+                        }
                     }
-
-                    // Store the counterexample and shrink count
-                    result.counterexample = @as(*anyopaque, @ptrCast(&simplified_value.value));
-                    result.num_shrinks = shrink_iterations;
-
-                    // Exit early since we found a failing case
-                    return result;
                 }
 
-                // If the predicate passed, clean up and increment the counter
-                test_value.deinit(allocator);
-                result.num_passed += 1;
+                // Store the counterexample and shrink count
+                result.counterexample = @as(*anyopaque, @ptrCast(&simplified_value.value));
+                result.num_shrinks = shrink_iterations;
+
+                // Return the failing result
+                return result;
             }
+
+            // If the predicate passed, clean up and increment the counter
+            test_value.deinit(allocator);
+            result.num_passed += 1;
 
             return result;
         }
