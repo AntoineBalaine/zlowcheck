@@ -29,10 +29,10 @@ pub const PropertyResult = struct {
     failure_bytes: ?[]const u8,
 
     /// Start offset in the original byte slice
-    byte_start: ?u32,
+    start_offset: ?u32,
 
     /// End offset in the original byte slice (bytes used)
-    byte_end: ?u32,
+    end_offset: ?u32,
 
     /// Format the failure bytes as a hex string for easy copy/paste into test cases
     /// Returns a string that needs to be freed by the caller
@@ -214,8 +214,8 @@ pub fn Property(comptime T: type) type {
                 .num_shrinks = 0,
                 .timestamp = std.time.milliTimestamp(),
                 .failure_bytes = null,
-                .byte_start = null,
-                .byte_end = null,
+                .start_offset = null,
+                .end_offset = null,
             };
 
             // Create a finite PRNG from the byte slice
@@ -257,8 +257,8 @@ pub fn Property(comptime T: type) type {
                 // Save the original byte position that produced the failure
                 // This is critical for reproducing the test failure
                 if (test_value.byte_pos) |pos| {
-                    result.byte_start = pos.start;
-                    result.byte_end = pos.end;
+                    result.start_offset = pos.start;
+                    result.end_offset = pos.end;
                     result.failure_bytes = bytes[pos.start..pos.end];
                 }
                 // If the byte position is null (which shouldn't happen for original generated values)
