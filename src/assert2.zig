@@ -47,7 +47,7 @@ pub fn assert(
     // Property failed - extract the counterexample
     if (failure_opt) |failure| {
         // Regenerate the counterexample using the same bytes that caused the failure
-        var finite_prng = @import("byte_slice_prng.zig").init(bytes[failure.start_offset.?..failure.end_offset.?]);
+        var finite_prng = @import("byte_slice_prng.zig").init(failure.failure_bytes.?);
         var random_for_example = finite_prng.random();
 
         // Generate the counterexample value

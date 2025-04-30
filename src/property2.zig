@@ -28,12 +28,6 @@ pub const PropertyResult = struct {
     /// The byte sequence that produced the failure
     failure_bytes: ?[]const u8,
 
-    /// Start offset in the original byte slice
-    start_offset: ?u32,
-
-    /// End offset in the original byte slice (bytes used)
-    end_offset: ?u32,
-
     /// Format the failure bytes as a hex string for easy copy/paste into test cases
     /// Returns a string that needs to be freed by the caller
     pub fn formatFailureBytes(self: PropertyResult, allocator: std.mem.Allocator) !?[]const u8 {
@@ -249,15 +243,11 @@ pub fn Property(comptime T: type, comptime GeneratorType: type) type {
                     .num_shrinks = 0,
                     .timestamp = std.time.milliTimestamp(),
                     .failure_bytes = null,
-                    .start_offset = null,
-                    .end_offset = null,
                 };
 
                 // Save the original byte position that produced the failure
                 // This is critical for reproducing the test failure
                 if (test_value.byte_pos) |pos| {
-                    result.start_offset = pos.start;
-                    result.end_offset = pos.end;
                     result.failure_bytes = bytes[pos.start..pos.end];
                 }
                 // If the byte position is null (which shouldn't happen for original generated values)
