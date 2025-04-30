@@ -1,5 +1,7 @@
 const std = @import("std");
 const FinitePrng = @import("byte_slice_prng.zig");
+const FiniteRandom = FinitePrng.FiniteRandom;
+const Ratio = FinitePrng.Ratio;
 
 /// Byte position information for value generation
 pub const BytePosition = struct {
@@ -284,7 +286,7 @@ pub fn tuple(comptime generators: anytype) blk: {
 }
 
 /// Choose between multiple generators
-pub fn oneOf(comptime generators: anytype, comptime weights: ?[]const f32) blk: {
+pub fn oneOf(comptime generators: anytype, comptime weights: ?[]const u32) blk: {
     // Get the type from the first generator
     const T = @TypeOf(generators[0]).ValueType;
 
@@ -305,19 +307,28 @@ pub fn oneOf(comptime generators: anytype, comptime weights: ?[]const f32) blk: 
             const Generators = generators;
             const Weights = weights;
 
-            fn weightedChoice(rand: *FinitePrng.FiniteRandom, weights_slice: []const f32) !usize {
-                var total: f32 = 0;
-                for (weights_slice) |w| total += w;
-
-                const r = try rand.floatNorm(f32) * total;
-                var cumulative: f32 = 0;
+            fn weightedChoice(rand: *FiniteRandom, weights_slice: []const u32) error{ OutOfMemory, OutOfEntropy }!usize {
+                // Use integer weights directly
+                var int_weights: [64]u64 = undefined; // Fixed size array to avoid allocation
+                var total: u64 = 0;
 
                 for (weights_slice, 0..) |w, i| {
-                    cumulative += w;
-                    if (r < cumulative) return i;
+                    if (i >= int_weights.len) break; // Safety check
+                    int_weights[i] = w; // No conversion needed
+                    total += int_weights[i];
                 }
 
-                return weights_slice.len - 1;
+                // Pick a random number in the range [0, total)
+                const pick = try rand.uintLessThan(u64, total);
+
+                // Find the corresponding index
+                var cumulative: u64 = 0;
+                for (int_weights[0..@min(weights_slice.len, int_weights.len)], 0..) |w, i| {
+                    cumulative += w;
+                    if (pick < cumulative) return i;
+                }
+
+                return @min(weights_slice.len, int_weights.len) - 1;
             }
 
             fn generate(random: *FinitePrng.FiniteRandom, allocator: std.mem.Allocator) error{ OutOfMemory, OutOfEntropy }!Value(T) {
@@ -831,7 +842,7 @@ fn intGen(comptime T: type, config: anytype) Generator(T) {
 
                 // Sometimes generate boundary values (20% of the time)
                 // TODO: switch to using a RATIO
-                if (try random.float(f32) < 0.2) {
+                if (try random.chance(.{ .numerator = 1, .denominator = 5 })) {
                     var boundaries: [7]T = undefined;
                     const count = getIntBoundaryValues(T, Min, Max, &boundaries);
 
@@ -1308,7 +1319,7 @@ fn floatGen(comptime T: type, config: anytype) Generator(T) {
                 const start_pos = random.prng.fixed_buffer.pos;
 
                 // Sometimes generate special values (20% of the time)
-                if (try random.float(f32) < 0.2) {
+                if (try random.chance(.{ .numerator = 1, .denominator = 5 })) {
                     var special_values: [8]T = undefined;
                     const count = getFloatSpecialValues(T, Min, Max, &special_values);
 
@@ -1318,7 +1329,8 @@ fn floatGen(comptime T: type, config: anytype) Generator(T) {
                 }
 
                 // Otherwise generate a random value in the range
-                const value = Min + (Max - Min) * try random.float(T);
+                const norm = try random.floatNorm(T);
+                const value = Min + (Max - Min) * norm;
                 const end_pos = random.prng.fixed_buffer.pos;
                 return Value(T).initNoContext(value, .{ .start = @intCast(start_pos), .end = @intCast(end_pos) });
             }
@@ -2013,15 +2025,30 @@ fn unionGen(comptime T: type, info: std.builtin.Type.Union, config: anytype) Gen
 /// Generate optional values
 fn optionalGen(comptime Child: type, comptime child_gen: Generator(Child), config: anytype) Generator(?Child) {
     // Default null probability if not specified
-    const null_prob: f32 = if (@hasField(@TypeOf(config), "null_probability"))
-        config.null_probability
-    else
-        0.5;
+    const chance_ratio = if (@hasField(@TypeOf(config), "null_ratio")) blk: {
+        const ratio_type = @TypeOf(config.null_ratio);
+
+        // If it's already a Ratio, use it directly
+        if (ratio_type == Ratio) {
+            break :blk config.null_ratio;
+        }
+
+        // Otherwise, check if it has compatible fields with correct types
+        if (!@hasField(ratio_type, "numerator") or !@hasField(ratio_type, "denominator")) {
+            @compileError("null_ratio must have numerator and denominator fields");
+        }
+
+        // Create a new Ratio with the values from the provided struct
+        break :blk Ratio{
+            .numerator = config.null_ratio.numerator,
+            .denominator = config.null_ratio.denominator,
+        };
+    } else Ratio{ .numerator = 1, .denominator = 2 }; // Default 1/2 ratio
 
     return Generator(?Child){
         .generateFn = struct {
             const ChildGen = child_gen;
-            const NullProb = null_prob;
+            const chanceRatio = chance_ratio;
 
             fn generate(random: *FinitePrng.FiniteRandom, allocator: std.mem.Allocator) error{ OutOfMemory, OutOfEntropy }!Value(?Child) {
                 const start_pos = random.prng.fixed_buffer.pos;
@@ -2048,7 +2075,7 @@ fn optionalGen(comptime Child: type, comptime child_gen: Generator(Child), confi
                 };
 
                 // Generate null with probability NullProb
-                if (try random.float(f32) < NullProb) {
+                if (try random.chance(chanceRatio)) {
                     // Create a context for null
                     const context = try allocator.create(OptContext);
                     context.* = .{

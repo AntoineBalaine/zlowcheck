@@ -1046,7 +1046,7 @@ test "oneOf respects weights" {
     }.alwaysFalse, null);
 
     // Create a heavily weighted generator that should mostly produce true
-    const weights = [_]f32{ 0.9, 0.1 }; // 90% true, 10% false
+    const weights = [_]u32{ 90, 10 }; // 90% true, 10% false
     const weightedGen = oneOf(.{ trueGen, falseGen }, &weights);
 
     // Create a buffer for random bytes
