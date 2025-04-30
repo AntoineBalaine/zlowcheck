@@ -3,7 +3,7 @@ const generator2 = @import("generator.zig");
 const Generator = generator2.Generator;
 const Value = generator2.Value;
 const ValueList = generator2.ValueList;
-const FinitePrng = @import("byte_slice_prng.zig");
+const FinitePrng = @import("finite_prng.zig");
 
 /// Result of a property check
 pub const PropertyResult = struct {

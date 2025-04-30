@@ -1,6 +1,6 @@
 const std = @import("std");
 const testing = std.testing;
-const FinitePrng = @import("byte_slice_prng.zig");
+const FinitePrng = @import("finite_prng.zig");
 
 test "FinitePrng initialization" {
     const bytes = &[_]u8{ 0x01, 0x02, 0x03, 0x04 };

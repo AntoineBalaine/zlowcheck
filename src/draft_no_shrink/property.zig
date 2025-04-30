@@ -1,6 +1,6 @@
 const std = @import("std");
 const Generator = @import("generator.zig").Generator;
-const FinitePrng = @import("../byte_slice_prng.zig");
+const FinitePrng = @import("../finite_prng.zig");
 
 /// Represents a failure found during property testing
 pub const PropertyFailure = struct {
