@@ -201,23 +201,12 @@ pub fn Property(comptime T: type) type {
 
         /// Run the property check using a byte slice as the randomness source
         ///
-        /// Errors:
-        /// - OutOfMemory: If memory allocation fails
-        /// - OutOfEntropy: If the input byte slice doesn't contain enough randomness
-        pub fn check(self: Self, allocator: std.mem.Allocator, bytes: []const u8) error{ OutOfMemory, OutOfEntropy }!PropertyResult {
-            // Initialize the PropertyResult
-            var result = PropertyResult{
-                .success = true,
-                .counterexample = null,
-                .num_passed = 0,
-                .num_skipped = 0,
-                .num_shrinks = 0,
-                .timestamp = std.time.milliTimestamp(),
-                .failure_bytes = null,
-                .start_offset = null,
-                .end_offset = null,
-            };
-
+        /// Returns:
+        /// - null if the test passes
+        /// - PropertyResult if the test fails
+        /// - error.OutOfMemory if memory allocation fails
+        /// - error.OutOfEntropy if the input byte slice doesn't contain enough randomness
+        pub fn check(self: Self, allocator: std.mem.Allocator, bytes: []const u8) error{ OutOfMemory, OutOfEntropy }!?PropertyResult {
             // Create a finite PRNG from the byte slice
             var prng = FinitePrng.init(bytes);
             var random = prng.random();
@@ -252,7 +241,17 @@ pub fn Property(comptime T: type) type {
 
             if (!predicate_result) {
                 // The predicate failed, we have a counterexample
-                result.success = false;
+                var result = PropertyResult{
+                    .success = false,
+                    .counterexample = null,
+                    .num_passed = 0,
+                    .num_skipped = 0,
+                    .num_shrinks = 0,
+                    .timestamp = std.time.milliTimestamp(),
+                    .failure_bytes = null,
+                    .start_offset = null,
+                    .end_offset = null,
+                };
 
                 // Save the original byte position that produced the failure
                 // This is critical for reproducing the test failure
@@ -329,9 +328,9 @@ pub fn Property(comptime T: type) type {
 
             // If the predicate passed, clean up and increment the counter
             test_value.deinit(allocator);
-            result.num_passed += 1;
 
-            return result;
+            // Test passed, return null
+            return null;
         }
     };
 }

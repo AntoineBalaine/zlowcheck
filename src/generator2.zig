@@ -841,7 +841,6 @@ fn intGen(comptime T: type, config: anytype) Generator(T) {
                 const start_pos = random.prng.fixed_buffer.pos;
 
                 // Sometimes generate boundary values (20% of the time)
-                // TODO: switch to using a RATIO
                 if (try random.chance(.{ .numerator = 1, .denominator = 5 })) {
                     var boundaries: [7]T = undefined;
                     const count = getIntBoundaryValues(T, Min, Max, &boundaries);

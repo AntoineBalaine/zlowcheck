@@ -43,8 +43,7 @@ pub fn assert(
     defer if (!using_provided_bytes) allocator.free(bytes);
 
     // Run the property check
-    const res = try prop.check(allocator, bytes);
-    const failure_opt = if (!res.success) res else null;
+    const failure_opt = try prop.check(allocator, bytes);
 
     // Property failed - extract the counterexample
     if (failure_opt) |failure| {

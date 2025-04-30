@@ -28,9 +28,8 @@ test "basic property test (addition commutative)" {
     // Run the property test (should always succeed)
     const result = try commutativeProperty.check(std.testing.allocator, &bytes);
 
-    // Should be successful
-    try std.testing.expect(result.success);
-    try std.testing.expectEqual(@as(usize, 1), result.num_passed);
+    // Should be successful (null result means success)
+    try std.testing.expectEqual(null, result);
 }
 
 test "failing property with shrinking (all integers are positive)" {
@@ -49,16 +48,16 @@ test "failing property with shrinking (all integers are positive)" {
     // Run the property test (should fail)
     const result = try positiveProperty.check(std.testing.allocator, &bytes);
 
-    // Should fail with a counterexample
-    try std.testing.expect(!result.success);
+    // Should fail with a counterexample (non-null result means failure)
+    try std.testing.expect(result != null);
 
     // The counterexample should be 0 or negative
-    try std.testing.expect(result.counterexample != null); // Should have a counterexample
-    if (result.counterexample) |counter_ptr| {
+    try std.testing.expect(result.?.counterexample != null); // Should have a counterexample
+    if (result.?.counterexample) |counter_ptr| {
         const counterexample = @as(*const i32, @ptrCast(@alignCast(counter_ptr))).*;
         try std.testing.expect(counterexample <= 0);
     }
-    try std.testing.expect(result.num_shrinks > 0);
+    try std.testing.expect(result.?.num_shrinks > 0);
 }
 
 test "property with hooks" {
@@ -90,8 +89,8 @@ test "property with hooks" {
     // Run the property test
     const result = try prop.check(std.testing.allocator, &bytes);
 
-    // Should succeed
-    try std.testing.expect(result.success);
+    // Should succeed (null result means success)
+    try std.testing.expectEqual(null, result);
 
     // Hooks should have been called once per test case
     try std.testing.expectEqual(@as(usize, 1), setup_called);
@@ -112,18 +111,18 @@ test "reproducing failures" {
     // Run the property test (should fail)
     const result = try minimalFailingProperty.check(std.testing.allocator, &bytes);
 
-    // Should fail with a counterexample
-    try std.testing.expect(!result.success);
-    try std.testing.expect(result.failure_bytes != null);
-    try std.testing.expect(result.counterexample != null); // Should have a counterexample
+    // Should fail with a counterexample (non-null result means failure)
+    try std.testing.expect(result != null);
+    try std.testing.expect(result.?.failure_bytes != null);
+    try std.testing.expect(result.?.counterexample != null); // Should have a counterexample
 
     // The counterexample should be the minimal failing example: < 10
-    if (result.counterexample) |counter_ptr| {
+    if (result.?.counterexample) |counter_ptr| {
         const counterexample = @as(*const i32, @ptrCast(@alignCast(counter_ptr))).*;
         try std.testing.expect(counterexample < 10);
 
         // Now reproduce with the exact same failure bytes
-        if (result.failure_bytes) |failure_bytes| {
+        if (result.?.failure_bytes) |failure_bytes| {
             // Create a new FinitePrng with just the failure bytes
             var prng = FinitePrng.init(failure_bytes);
             var random = prng.random();
