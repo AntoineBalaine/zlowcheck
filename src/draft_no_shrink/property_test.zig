@@ -5,8 +5,8 @@ const property = property_mod.property;
 const Property = property_mod.Property;
 const PropertyFailure = property_mod.PropertyFailure;
 const ByteRange = property_mod.ByteRange;
-const ByteSlicePrng = @import("byte_slice_prng.zig");
-const load_bytes = @import("test_helpers.zig").load_bytes;
+const ByteSlicePrng = @import("../byte_slice_prng.zig");
+const load_bytes = @import("../test_helpers.zig").load_bytes;
 const gen = generator.gen;
 const Generator = generator.Generator;
 

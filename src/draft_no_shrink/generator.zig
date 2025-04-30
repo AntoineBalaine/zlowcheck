@@ -1,5 +1,5 @@
 const std = @import("std");
-const FinitePrng = @import("byte_slice_prng.zig");
+const FinitePrng = @import("../byte_slice_prng.zig");
 const FiniteRandom = FinitePrng.FiniteRandom;
 const Ratio = FinitePrng.Ratio;
 /// Core Generator type that produces random values of a specific type

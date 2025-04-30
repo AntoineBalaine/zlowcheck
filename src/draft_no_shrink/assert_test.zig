@@ -8,7 +8,7 @@ const property = property_mod.property;
 const Property = property_mod.Property;
 const PropertyFailure = property_mod.PropertyFailure;
 const gen = @import("generator.zig").gen;
-const load_bytes = @import("test_helpers.zig").load_bytes;
+const load_bytes = @import("../test_helpers.zig").load_bytes;
 
 test "assert passes for valid property" {
     // Create a property that always passes
