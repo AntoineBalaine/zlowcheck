@@ -67,12 +67,12 @@ pub const PropertyResult = struct {
 
 /// A property is a testable statement about inputs
 /// It combines a generator with a predicate function
-pub fn Property(comptime T: type) type {
+pub fn Property(comptime T: type, comptime GeneratorType: type) type {
     return struct {
         const Self = @This();
 
         /// The generator used to create test values
-        generator: Generator(T),
+        generator: GeneratorType,
 
         /// The predicate function that tests each value
         predicate: *const fn (T) bool,
@@ -86,7 +86,7 @@ pub fn Property(comptime T: type) type {
         after_each_fn: ?*const fn (*anyopaque) void = null,
 
         /// Create a new property from a generator and predicate
-        pub fn init(generator: Generator(T), predicate: fn (T) bool) Self {
+        pub fn init(generator: GeneratorType, predicate: fn (T) bool) Self {
             return .{
                 .generator = generator,
                 .predicate = predicate,
@@ -273,11 +273,11 @@ pub fn Property(comptime T: type) type {
                     found_simpler = false;
 
                     // Get possible simplifications
-                    const shrinks = try self.generator.shrink(simplified_value.value, simplified_value.context, allocator);
+                    var shrinks = try self.generator.shrink(simplified_value.value, simplified_value.context, allocator);
                     defer shrinks.deinit();
 
                     // Find the first shrink that still fails the test
-                    for (shrinks.values) |shrink| {
+                    for (shrinks.values) |*shrink| {
                         // Run the before hook if any
                         if (self.before_each_fn) |hookFn| {
                             if (self.before_each_context) |ctx| {
@@ -307,9 +307,12 @@ pub fn Property(comptime T: type) type {
                             simplified_value.deinit(allocator);
 
                             // Create a copy of the shrunk value
-                            simplified_value = shrink;
+                            simplified_value = shrink.*;
                             shrink_iterations += 1;
                             found_simpler = true;
+
+                            shrink.context = null;
+                            shrink.context_deinit = null;
 
                             // Note: shrunk values don't always have meaningful byte positions
                             // but we keep the original byte range that led to the failure
@@ -320,6 +323,7 @@ pub fn Property(comptime T: type) type {
 
                 // Store the counterexample and shrink count
                 result.counterexample = @as(*anyopaque, @ptrCast(&simplified_value.value));
+                simplified_value.deinit(allocator);
                 result.num_shrinks = shrink_iterations;
 
                 // Return the failing result
@@ -336,15 +340,27 @@ pub fn Property(comptime T: type) type {
 }
 
 /// Create a property that checks a condition on generated values
-pub fn property(comptime T: type, generator: Generator(T), predicate: fn (T) bool) Property(T) {
-    return Property(T).init(generator, predicate);
-}
+/// Accepts any generator type that has the required methods
+pub fn property(comptime T: type, generator: anytype, predicate: fn (T) bool) Property(T, @TypeOf(generator)) {
+    // Validate that the generator has the required methods at compile time
+    const GeneratorType = @TypeOf(generator);
 
-/// Create a property for a tuple of generated values
-pub fn tupleProperty(comptime Tuple: type, generators: anytype, predicate: fn (Tuple) bool) !Property(Tuple) {
-    _ = generators;
-    _ = predicate;
-    // We would implement a way to create a tuple generator from multiple generators
-    // For now, this is a placeholder
-    @compileError("tupleProperty not yet implemented");
+    // Just do basic method existence checks
+    comptime {
+        // Check if the generator has a ValueType that matches T
+        if (!@hasDecl(GeneratorType, "ValueType") or GeneratorType.ValueType != T) {
+            @compileError("Generator must produce values of type " ++ @typeName(T));
+        }
+
+        // Check for required methods
+        if (!@hasDecl(GeneratorType, "generate")) {
+            @compileError("Generator must have a generate method");
+        }
+
+        if (!@hasDecl(GeneratorType, "shrink")) {
+            @compileError("Generator must have a shrink method");
+        }
+    }
+
+    return Property(T, GeneratorType).init(generator, predicate);
 }

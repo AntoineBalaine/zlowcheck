@@ -22,8 +22,7 @@ pub const AssertConfig = struct {
 /// Assert that a property holds
 /// Returns an error if the property fails
 pub fn assert(
-    comptime T: type,
-    prop: Property(T),
+    prop: anytype,
     config: AssertConfig,
     allocator: std.mem.Allocator,
 ) !?property_mod.PropertyResult {
@@ -66,16 +65,20 @@ pub fn assert(
 }
 
 test assert {
-    // Create a property that passes only for even numbers
-    const evenOnly = property(i32, @import("generator2.zig").gen(i32, .{}), struct {
+    // Create a simple property that always fails with a direct generator
+    const intGen = @import("generator2.zig").gen(i32, .{ .min = -10, .max = -1 });
+
+    // Property that requires positive values (will always fail with our generator)
+    const positiveProperty = property(i32, intGen, struct {
         fn test_(n: i32) bool {
-            return @rem(n, 2) == 0;
+            return n > 0;
         }
     }.test_);
 
     var bytes: [4096]u8 = undefined;
     @import("test_helpers.zig").load_bytes(&bytes);
 
-    const result = try assert(i32, evenOnly, .{ .runs = 1000, .bytes = &bytes }, std.testing.allocator);
+    // This should fail since we're generating negative numbers but requiring positive ones
+    const result = try assert(positiveProperty, .{ .bytes = &bytes }, std.testing.allocator);
     try std.testing.expect(result != null);
 }

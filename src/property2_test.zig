@@ -136,3 +136,37 @@ test "reproducing failures" {
         }
     }
 }
+
+test "mapped generator with property" {
+    // Create a mapped generator that forces odd values
+    const intGen = gen(i32, .{ .min = 0, .max = 10 });
+    const oddOnlyGen = intGen.map(i32, struct {
+        pub fn map(n: i32) i32 {
+            // Make sure we always return odd numbers
+            return if (@rem(n, 2) == 0) n + 1 else n;
+        }
+    }.map, null);
+
+    // Property that requires even numbers (should always fail with our generator)
+    const evenOnlyProperty = property(i32, oddOnlyGen, struct {
+        fn test_(n: i32) bool {
+            return @rem(n, 2) == 0; // Will fail since the generator always returns odd numbers
+        }
+    }.test_);
+
+    // Create a byte slice for testing
+    var bytes: [4096]u8 = undefined;
+    load_bytes(&bytes);
+
+    // Run the property test (should fail)
+    const result = try evenOnlyProperty.check(std.testing.allocator, &bytes);
+
+    // Should fail with a counterexample (non-null result means failure)
+    try std.testing.expect(result != null);
+
+    // The counterexample should be an odd number
+    if (result.?.counterexample) |counter_ptr| {
+        const counterexample = @as(*const i32, @ptrCast(@alignCast(counter_ptr))).*;
+        try std.testing.expect(@rem(counterexample, 2) == 1); // Should be odd
+    }
+}
