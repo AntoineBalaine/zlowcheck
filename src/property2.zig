@@ -223,9 +223,16 @@ pub fn Property(comptime T: type) type {
             if (!predicate_result) {
                 // The predicate failed, we have a counterexample
                 result.success = false;
-                result.byte_start = test_value.byte_start;
-                result.byte_end = test_value.byte_end;
-                result.failure_bytes = bytes[test_value.byte_start..test_value.byte_end];
+                
+                // Save the original byte position that produced the failure
+                // This is critical for reproducing the test failure
+                if (test_value.byte_pos) |pos| {
+                    result.byte_start = pos.start;
+                    result.byte_end = pos.end;
+                    result.failure_bytes = bytes[pos.start..pos.end];
+                }
+                // If the byte position is null (which shouldn't happen for original generated values)
+                // we leave the result.byte_start, result.byte_end, and result.failure_bytes as null
 
                 // Try to shrink the counterexample
                 var simplified_value = test_value;
