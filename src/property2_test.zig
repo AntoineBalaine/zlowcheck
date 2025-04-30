@@ -170,3 +170,38 @@ test "mapped generator with property" {
         try std.testing.expect(@rem(counterexample, 2) == 1); // Should be odd
     }
 }
+
+test "filtered generator with property" {
+    // Create a filtered generator that only allows even values
+    const intGen = gen(i32, .{ .min = 0, .max = 100 });
+    const evenOnlyGen = intGen.filter(struct {
+        pub fn filter(n: i32) bool {
+            // Only accept even numbers
+            return @rem(n, 2) == 0;
+        }
+    }.filter);
+
+    // Property that requires odd numbers (should always fail with our generator)
+    const oddOnlyProperty = property(i32, evenOnlyGen, struct {
+        fn test_(n: i32) bool {
+            return @rem(n, 2) == 1; // Will fail since the generator always returns even numbers
+        }
+    }.test_);
+
+    // Create a byte slice for testing
+    var bytes: [4096]u8 = undefined;
+    load_bytes(&bytes);
+
+    // Run the property test (should fail)
+    const result = try oddOnlyProperty.check(std.testing.allocator, &bytes);
+
+    // Should fail with a counterexample (non-null result means failure)
+    try std.testing.expect(result != null);
+
+    // The counterexample should be an even number
+    if (result.?.counterexample) |counter_ptr| {
+        const counterexample = @as(*const i32, @ptrCast(@alignCast(counter_ptr))).*;
+        try std.testing.expect(@rem(counterexample, 2) == 0); // Should be even
+        try std.testing.expect(counterexample >= 0 and counterexample <= 100); // Should be in range
+    }
+}
