@@ -1,5 +1,5 @@
 const std = @import("std");
-const generator2 = @import("generator2.zig");
+const generator2 = @import("generator.zig");
 const Generator = generator2.Generator;
 const Value = generator2.Value;
 const ValueList = generator2.ValueList;

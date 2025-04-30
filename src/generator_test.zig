@@ -1,12 +1,12 @@
 const std = @import("std");
-const generator2 = @import("generator2.zig");
+const generator2 = @import("generator.zig");
 const FinitePrng = @import("byte_slice_prng.zig");
 const load_bytes = @import("test_helpers.zig").load_bytes;
 
 const gen = generator2.gen;
 const Value = generator2.Value;
 const ValueList = generator2.ValueList;
-const property = @import("property2.zig").property;
+const property = @import("property.zig").property;
 const tuple = generator2.tuple;
 const oneOf = generator2.oneOf;
 

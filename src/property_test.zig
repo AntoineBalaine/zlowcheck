@@ -1,6 +1,6 @@
 const std = @import("std");
-const property_mod = @import("property2.zig");
-const generator2 = @import("generator2.zig");
+const property_mod = @import("property.zig");
+const generator2 = @import("generator.zig");
 const FinitePrng = @import("byte_slice_prng.zig");
 const load_bytes = @import("test_helpers.zig").load_bytes;
 

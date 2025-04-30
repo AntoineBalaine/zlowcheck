@@ -1,6 +1,6 @@
 const std = @import("std");
-const property_mod = @import("property2.zig");
-const generator2 = @import("generator2.zig");
+const property_mod = @import("property.zig");
+const generator2 = @import("generator.zig");
 
 const property = property_mod.property;
 const Property = property_mod.Property;
@@ -66,7 +66,7 @@ pub fn assert(
 
 test assert {
     // Create a simple property that always fails with a direct generator
-    const intGen = @import("generator2.zig").gen(i32, .{ .min = -10, .max = -1 });
+    const intGen = @import("generator.zig").gen(i32, .{ .min = -10, .max = -1 });
 
     // Property that requires positive values (will always fail with our generator)
     const positiveProperty = property(i32, intGen, struct {
