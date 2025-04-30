@@ -1,5 +1,7 @@
 const std = @import("std");
 const generator2 = @import("generator2.zig");
+const FinitePrng = @import("byte_slice_prng.zig");
+const load_bytes = @import("test_helpers.zig").load_bytes;
 
 const gen = generator2.gen;
 const Value = generator2.Value;
@@ -12,15 +14,28 @@ test "int generator produces values within range" {
     // Create a generator for integers between 10 and 20
     const intGenerator = gen(i32, .{ .min = 10, .max = 20 });
 
-    var prng = std.Random.DefaultPrng.init(42); // Fixed seed for reproducibility
-    const random = prng.random();
+    // Create a buffer for random bytes
+    var bytes: [4096]u8 = undefined;
+    
+    // Generate 20 values with different random seeds and check they're within range
+    for (0..20) |_| {
+        // Load random bytes for each test
+        load_bytes(&bytes);
+        
+        // Create a finite PRNG
+        var prng = FinitePrng.init(&bytes);
+        var random = prng.random();
 
-    // Generate 100 values and check they're all within range
-    for (0..100) |_| {
-        const value = try intGenerator.generate(random, 10, std.testing.allocator);
+        // Generate the value
+        const value = try intGenerator.generate(&random, std.testing.allocator);
         defer value.deinit(std.testing.allocator);
 
+        // Verify the value is within range
         try std.testing.expect(value.value >= 10 and value.value <= 20);
+        
+        // Verify byte range is properly recorded
+        try std.testing.expect(value.byte_start < value.byte_end);
+        try std.testing.expect(value.byte_end <= bytes.len);
     }
 }
 
@@ -28,11 +43,16 @@ test "integer shrinking produces smaller values" {
     // Create a generator for integers between -100 and 100
     const intGenerator = gen(i32, .{ .min = -100, .max = 100 });
 
-    var prng = std.Random.DefaultPrng.init(42);
-    const random = prng.random();
+    // Create a buffer for random bytes
+    var bytes: [4096]u8 = undefined;
+    load_bytes(&bytes);
+    
+    // Create a finite PRNG
+    var prng = FinitePrng.init(&bytes);
+    var random = prng.random();
 
     // Generate a value then shrink it
-    const value = try intGenerator.generate(random, 10, std.testing.allocator);
+    const value = try intGenerator.generate(&random, std.testing.allocator);
     defer value.deinit(std.testing.allocator);
 
     // Only test shrinking for non-zero values
