@@ -16,12 +16,12 @@ test "int generator produces values within range" {
 
     // Create a buffer for random bytes
     var bytes: [4096]u8 = undefined;
-    
+
     // Generate 20 values with different random seeds and check they're within range
     for (0..20) |_| {
         // Load random bytes for each test
         load_bytes(&bytes);
-        
+
         // Create a finite PRNG
         var prng = FinitePrng.init(&bytes);
         var random = prng.random();
@@ -32,10 +32,13 @@ test "int generator produces values within range" {
 
         // Verify the value is within range
         try std.testing.expect(value.value >= 10 and value.value <= 20);
-        
+
         // Verify byte range is properly recorded
-        try std.testing.expect(value.byte_start < value.byte_end);
-        try std.testing.expect(value.byte_end <= bytes.len);
+        try std.testing.expect(value.byte_pos != null);
+        if (value.byte_pos) |pos| {
+            try std.testing.expect(pos.start < pos.end);
+            try std.testing.expect(pos.end <= bytes.len);
+        }
     }
 }
 
@@ -46,7 +49,7 @@ test "integer shrinking produces smaller values" {
     // Create a buffer for random bytes
     var bytes: [4096]u8 = undefined;
     load_bytes(&bytes);
-    
+
     // Create a finite PRNG
     var prng = FinitePrng.init(&bytes);
     var random = prng.random();
@@ -83,11 +86,16 @@ test "shrinking preserves value range" {
     // Create a generator for positive integers between 50 and 100
     const intGenerator = gen(i32, .{ .min = 50, .max = 100 });
 
-    var prng = std.Random.DefaultPrng.init(42);
-    const random = prng.random();
+    // Create a buffer for random bytes
+    var bytes: [4096]u8 = undefined;
+    load_bytes(&bytes);
+
+    // Create a finite PRNG
+    var prng = FinitePrng.init(&bytes);
+    var random = prng.random();
 
     // Generate a value then shrink it
-    const value = try intGenerator.generate(random, 10, std.testing.allocator);
+    const value = try intGenerator.generate(&random, std.testing.allocator);
     defer value.deinit(std.testing.allocator);
 
     const shrinks = try intGenerator.shrink(value.value, value.context, std.testing.allocator);
@@ -122,11 +130,16 @@ test "map with shrinking" {
     // Map to double the values
     const doubledGenerator = intGenerator.map(i32, double, halve);
 
-    var prng = std.Random.DefaultPrng.init(42);
-    const random = prng.random();
+    // Create a buffer for random bytes
+    var bytes: [4096]u8 = undefined;
+    load_bytes(&bytes);
+
+    // Create a finite PRNG
+    var prng = FinitePrng.init(&bytes);
+    var random = prng.random();
 
     // Generate a value, verify it's doubled, then shrink it
-    const value = try doubledGenerator.generate(random, 10, std.testing.allocator);
+    const value = try doubledGenerator.generate(&random, std.testing.allocator);
     defer value.deinit(std.testing.allocator);
 
     // Value should be even and between 2 and 200
@@ -162,11 +175,16 @@ test "filter with shrinking" {
     // Filter to only positive values
     const positiveGenerator = intGenerator.filter(isPositive);
 
-    var prng = std.Random.DefaultPrng.init(42);
-    const random = prng.random();
+    // Create a buffer for random bytes
+    var bytes: [4096]u8 = undefined;
+    load_bytes(&bytes);
+
+    // Create a finite PRNG
+    var prng = FinitePrng.init(&bytes);
+    var random = prng.random();
 
     // Generate a value, verify it's positive, then shrink it
-    const value = try positiveGenerator.generate(random, 10, std.testing.allocator);
+    const value = try positiveGenerator.generate(&random, std.testing.allocator);
     defer value.deinit(std.testing.allocator);
 
     // Value should be positive
@@ -199,12 +217,16 @@ test "basic property test (addition commutative)" {
         }
     }.test_);
 
+    // Create a buffer for random bytes
+    var bytes: [4096]u8 = undefined;
+    load_bytes(&bytes);
+
     // Run the property test
-    const result = try commutativeProperty.check(std.testing.allocator, 100, 42);
+    const result = try commutativeProperty.check(std.testing.allocator, &bytes);
 
     // Should always succeed
     try std.testing.expect(result.success);
-    try std.testing.expectEqual(@as(usize, 100), result.num_passed);
+    try std.testing.expectEqual(@as(usize, 1), result.num_passed);
 }
 
 test "failing property with shrinking (all integers are positive)" {
@@ -215,8 +237,12 @@ test "failing property with shrinking (all integers are positive)" {
         }
     }.test_);
 
+    // Create a buffer for random bytes
+    var bytes: [4096]u8 = undefined;
+    load_bytes(&bytes);
+
     // Run the property test (should fail)
-    const result = try positiveProperty.check(std.testing.allocator, 100, 42);
+    const result = try positiveProperty.check(std.testing.allocator, &bytes);
 
     // Should fail with a counterexample
     try std.testing.expect(!result.success);
@@ -255,15 +281,19 @@ test "property with hooks" {
         }
     }.hook);
 
+    // Create a buffer for random bytes
+    var bytes: [4096]u8 = undefined;
+    load_bytes(&bytes);
+
     // Run the property test
-    const result = try prop.check(std.testing.allocator, 10, 42);
+    const result = try prop.check(std.testing.allocator, &bytes);
 
     // Should succeed
     try std.testing.expect(result.success);
 
     // Hooks should have been called once per test case
-    try std.testing.expectEqual(@as(usize, 10), setup_called);
-    try std.testing.expectEqual(@as(usize, 10), teardown_called);
+    try std.testing.expectEqual(@as(usize, 1), setup_called);
+    try std.testing.expectEqual(@as(usize, 1), teardown_called);
 }
 
 test "property with context-less hooks" {
@@ -289,15 +319,19 @@ test "property with context-less hooks" {
         }
     }.hook);
 
+    // Create a buffer for random bytes
+    var bytes: [4096]u8 = undefined;
+    load_bytes(&bytes);
+
     // Run the property test
-    const result = try prop.check(std.testing.allocator, 10, 42);
+    const result = try prop.check(std.testing.allocator, &bytes);
 
     // Should succeed
     try std.testing.expect(result.success);
 
     // Hooks should have been called once per test case
-    try std.testing.expectEqual(@as(usize, 10), setup_called);
-    try std.testing.expectEqual(@as(usize, 10), teardown_called);
+    try std.testing.expectEqual(@as(usize, 1), setup_called);
+    try std.testing.expectEqual(@as(usize, 1), teardown_called);
 }
 
 test "property test finds minimal failing example" {
@@ -308,8 +342,12 @@ test "property test finds minimal failing example" {
         }
     }.test_);
 
+    // Create a buffer for random bytes
+    var bytes: [4096]u8 = undefined;
+    load_bytes(&bytes);
+
     // Run the property test
-    const result = try minimalFailingProperty.check(std.testing.allocator, 100, 42);
+    const result = try minimalFailingProperty.check(std.testing.allocator, &bytes);
 
     // Should fail with a counterexample
     try std.testing.expect(!result.success);
@@ -330,12 +368,17 @@ test "float generator produces values within range" {
     // Create a generator for floats between -10.0 and 10.0
     const floatGenerator = gen(f64, .{ .min = -10.0, .max = 10.0 });
 
-    var prng = std.Random.DefaultPrng.init(42);
-    const random = prng.random();
+    // Create a buffer for random bytes
+    var bytes: [4096]u8 = undefined;
+    load_bytes(&bytes);
+
+    // Create a finite PRNG
+    var prng = FinitePrng.init(&bytes);
+    var random = prng.random();
 
     // Generate 100 values and check they're all within range
     for (0..100) |_| {
-        const value = try floatGenerator.generate(random, 10, std.testing.allocator);
+        const value = try floatGenerator.generate(&random, std.testing.allocator);
         defer value.deinit(std.testing.allocator);
 
         // Skip NaN and infinity checks
@@ -348,8 +391,13 @@ test "float generator produces values within range" {
 test "float generator produces special values" {
     const floatGenerator = gen(f64, .{});
 
-    var prng = std.Random.DefaultPrng.init(42);
-    const random = prng.random();
+    // Create a buffer for random bytes
+    var bytes: [4096]u8 = undefined;
+    load_bytes(&bytes);
+
+    // Create a finite PRNG
+    var prng = FinitePrng.init(&bytes);
+    var random = prng.random();
 
     // Track special values we've seen
     var seen_zero = false;
@@ -360,7 +408,7 @@ test "float generator produces special values" {
 
     // Generate many values to increase chance of hitting special values
     for (0..1000) |_| {
-        const value = try floatGenerator.generate(random, 10, std.testing.allocator);
+        const value = try floatGenerator.generate(&random, std.testing.allocator);
         defer value.deinit(std.testing.allocator);
 
         if (value.value == 0.0) seen_zero = true;
@@ -390,11 +438,16 @@ test "float shrinking produces simpler values" {
     // Create a generator for floats
     const floatGenerator = gen(f64, .{ .min = -100.0, .max = 100.0 });
 
-    var prng = std.Random.DefaultPrng.init(42);
-    const random = prng.random();
+    // Create a buffer for random bytes
+    var bytes: [4096]u8 = undefined;
+    load_bytes(&bytes);
+
+    // Create a finite PRNG
+    var prng = FinitePrng.init(&bytes);
+    var random = prng.random();
 
     // Generate a value then shrink it
-    const value = try floatGenerator.generate(random, 10, std.testing.allocator);
+    const value = try floatGenerator.generate(&random, std.testing.allocator);
     defer value.deinit(std.testing.allocator);
 
     // Only test shrinking for non-zero, non-special values
@@ -427,12 +480,17 @@ test "array generator produces arrays of the correct length" {
         .child_config = .{ .min = -10, .max = 10 },
     });
 
-    var prng = std.Random.DefaultPrng.init(42);
-    const random = prng.random();
+    // Create a buffer for random bytes
+    var bytes: [4096]u8 = undefined;
+    load_bytes(&bytes);
+
+    // Create a finite PRNG
+    var prng = FinitePrng.init(&bytes);
+    var random = prng.random();
 
     // Generate a few arrays and check their length
     for (0..10) |_| {
-        const array = try arrayGenerator.generate(random, 10, std.testing.allocator);
+        const array = try arrayGenerator.generate(&random, std.testing.allocator);
         defer array.deinit(std.testing.allocator);
 
         try std.testing.expectEqual(@as(usize, 5), array.value.len);
@@ -445,12 +503,17 @@ test "array generator respects element bounds" {
         .child_config = .{ .min = 5, .max = 15 },
     });
 
-    var prng = std.Random.DefaultPrng.init(42);
-    const random = prng.random();
+    // Create a buffer for random bytes
+    var bytes: [4096]u8 = undefined;
+    load_bytes(&bytes);
+
+    // Create a finite PRNG
+    var prng = FinitePrng.init(&bytes);
+    var random = prng.random();
 
     // Generate arrays and check all elements are within bounds
     for (0..10) |_| {
-        const array = try arrayGenerator.generate(random, 10, std.testing.allocator);
+        const array = try arrayGenerator.generate(&random, std.testing.allocator);
         defer array.deinit(std.testing.allocator);
 
         for (array.value) |value| {
@@ -465,11 +528,16 @@ test "array shrinking preserves element bounds" {
         .child_config = .{ .min = 5, .max = 15 },
     });
 
-    var prng = std.Random.DefaultPrng.init(42);
-    const random = prng.random();
+    // Create a buffer for random bytes
+    var bytes: [4096]u8 = undefined;
+    load_bytes(&bytes);
+
+    // Create a finite PRNG
+    var prng = FinitePrng.init(&bytes);
+    var random = prng.random();
 
     // Generate a value then shrink it
-    const array = try arrayGenerator.generate(random, 10, std.testing.allocator);
+    const array = try arrayGenerator.generate(&random, std.testing.allocator);
     defer array.deinit(std.testing.allocator);
 
     const shrinks = try arrayGenerator.shrink(array.value, array.context, std.testing.allocator);
@@ -491,12 +559,17 @@ test "slice generator produces slices of correct length range" {
         .child_config = .{ .min = -10, .max = 10 },
     });
 
-    var prng = std.Random.DefaultPrng.init(42);
-    const random = prng.random();
+    // Create a buffer for random bytes
+    var bytes: [4096]u8 = undefined;
+    load_bytes(&bytes);
+
+    // Create a finite PRNG
+    var prng = FinitePrng.init(&bytes);
+    var random = prng.random();
 
     // Generate slices and check their length is within range
     for (0..10) |_| {
-        const slice = try sliceGenerator.generate(random, 10, std.testing.allocator);
+        const slice = try sliceGenerator.generate(&random, std.testing.allocator);
         defer slice.deinit(std.testing.allocator);
 
         try std.testing.expect(slice.value.len >= 3 and slice.value.len <= 7);
@@ -511,12 +584,17 @@ test "slice generator respects element bounds" {
         .child_config = .{ .min = 5, .max = 15 },
     });
 
-    var prng = std.Random.DefaultPrng.init(42);
-    const random = prng.random();
+    // Create a buffer for random bytes
+    var bytes: [4096]u8 = undefined;
+    load_bytes(&bytes);
+
+    // Create a finite PRNG
+    var prng = FinitePrng.init(&bytes);
+    var random = prng.random();
 
     // Generate slices and check all elements are within bounds
     for (0..10) |_| {
-        const slice = try sliceGenerator.generate(random, 10, std.testing.allocator);
+        const slice = try sliceGenerator.generate(&random, std.testing.allocator);
         defer slice.deinit(std.testing.allocator);
 
         for (slice.value) |value| {
@@ -533,11 +611,16 @@ test "slice shrinking works correctly" {
         .child_config = .{ .min = -10, .max = 10 },
     });
 
-    var prng = std.Random.DefaultPrng.init(42);
-    const random = prng.random();
+    // Create a buffer for random bytes
+    var bytes: [4096]u8 = undefined;
+    load_bytes(&bytes);
+
+    // Create a finite PRNG
+    var prng = FinitePrng.init(&bytes);
+    var random = prng.random();
 
     // Generate a value then shrink it
-    const slice = try sliceGenerator.generate(random, 10, std.testing.allocator);
+    const slice = try sliceGenerator.generate(&random, std.testing.allocator);
     defer slice.deinit(std.testing.allocator);
 
     const shrinks = try sliceGenerator.shrink(slice.value, slice.context, std.testing.allocator);
@@ -573,11 +656,16 @@ test "single pointer generator works correctly" {
         .child_config = .{ .min = -50, .max = 50 },
     });
 
-    var prng = std.Random.DefaultPrng.init(42);
-    const random = prng.random();
+    // Create a buffer for random bytes
+    var bytes: [4096]u8 = undefined;
+    load_bytes(&bytes);
+
+    // Create a finite PRNG
+    var prng = FinitePrng.init(&bytes);
+    var random = prng.random();
 
     // Generate a pointer and check its value
-    const int_ptr = try intPtrGenerator.generate(random, 10, std.testing.allocator);
+    const int_ptr = try intPtrGenerator.generate(&random, std.testing.allocator);
     defer int_ptr.deinit(std.testing.allocator);
 
     try std.testing.expect(int_ptr.value.* >= -50 and int_ptr.value.* <= 50);
@@ -589,11 +677,16 @@ test "pointer shrinking works correctly" {
         .child_config = .{ .min = -50, .max = 50 },
     });
 
-    var prng = std.Random.DefaultPrng.init(42);
-    const random = prng.random();
+    // Create a buffer for random bytes
+    var bytes: [4096]u8 = undefined;
+    load_bytes(&bytes);
+
+    // Create a finite PRNG
+    var prng = FinitePrng.init(&bytes);
+    var random = prng.random();
 
     // Generate a value then shrink it
-    const ptr = try intPtrGenerator.generate(random, 10, std.testing.allocator);
+    const ptr = try intPtrGenerator.generate(&random, std.testing.allocator);
     defer ptr.deinit(std.testing.allocator);
 
     // Only test shrinking for non-zero values
@@ -623,15 +716,20 @@ test "enum generator produces valid enum values" {
     // Create a generator for the Color enum
     const colorGenerator = gen(Color, .{});
 
-    var prng = std.Random.DefaultPrng.init(42);
-    const random = prng.random();
+    // Create a buffer for random bytes
+    var bytes: [4096]u8 = undefined;
+    load_bytes(&bytes);
+
+    // Create a finite PRNG
+    var prng = FinitePrng.init(&bytes);
+    var random = prng.random();
 
     // Track which enum values we've seen
     var seen = [_]bool{false} ** 5;
 
     // Generate many values to ensure we get all enum variants
     for (0..100) |_| {
-        const color = try colorGenerator.generate(random, 10, std.testing.allocator);
+        const color = try colorGenerator.generate(&random, std.testing.allocator);
         defer color.deinit(std.testing.allocator);
 
         // Verify it's a valid enum value
@@ -667,8 +765,13 @@ test "union generator produces valid values" {
         .boolean = .{},
     });
 
-    var prng = std.Random.DefaultPrng.init(42);
-    const random = prng.random();
+    // Create a buffer for random bytes
+    var bytes: [4096]u8 = undefined;
+    load_bytes(&bytes);
+
+    // Create a finite PRNG
+    var prng = FinitePrng.init(&bytes);
+    var random = prng.random();
 
     // Track which union variants we've seen
     var seen_int = false;
@@ -677,7 +780,7 @@ test "union generator produces valid values" {
 
     // Generate many values to ensure we get all variants
     for (0..100) |_| {
-        const value = try valueGenerator.generate(random, 10, std.testing.allocator);
+        const value = try valueGenerator.generate(&random, std.testing.allocator);
         defer value.deinit(std.testing.allocator);
 
         // Determine which variant we got and verify its constraints
@@ -718,11 +821,16 @@ test "union shrinking works correctly" {
         .float = .{ .min = -10.0, .max = 10.0 },
     });
 
-    var prng = std.Random.DefaultPrng.init(42);
-    const random = prng.random();
+    // Create a buffer for random bytes
+    var bytes: [4096]u8 = undefined;
+    load_bytes(&bytes);
+
+    // Create a finite PRNG
+    var prng = FinitePrng.init(&bytes);
+    var random = prng.random();
 
     // Generate a value then shrink it
-    const value = try valueGenerator.generate(random, 10, std.testing.allocator);
+    const value = try valueGenerator.generate(&random, std.testing.allocator);
     defer value.deinit(std.testing.allocator);
 
     const shrinks = try valueGenerator.shrink(value.value, value.context, std.testing.allocator);
@@ -742,15 +850,20 @@ test "optional generator produces both null and values" {
         .null_probability = 0.5, // 50% chance of null
     });
 
-    var prng = std.Random.DefaultPrng.init(42);
-    const random = prng.random();
+    // Create a buffer for random bytes
+    var bytes: [4096]u8 = undefined;
+    load_bytes(&bytes);
+
+    // Create a finite PRNG
+    var prng = FinitePrng.init(&bytes);
+    var random = prng.random();
 
     var seen_null = false;
     var seen_value = false;
 
     // Generate values until we've seen both null and non-null
     for (0..100) |_| {
-        const value = try optIntGenerator.generate(random, 10, std.testing.allocator);
+        const value = try optIntGenerator.generate(&random, std.testing.allocator);
         defer value.deinit(std.testing.allocator);
 
         if (value.value == null) {
@@ -775,8 +888,13 @@ test "optional shrinking works correctly" {
         .null_probability = 0.3,
     });
 
-    var prng = std.Random.DefaultPrng.init(42);
-    const random = prng.random();
+    // Create a buffer for random bytes
+    var bytes: [4096]u8 = undefined;
+    load_bytes(&bytes);
+
+    // Create a finite PRNG
+    var prng = FinitePrng.init(&bytes);
+    var random = prng.random();
 
     // Generate a non-null value
     var value: Value(?i32) = undefined;
@@ -784,7 +902,7 @@ test "optional shrinking works correctly" {
 
     // Try to get a non-null value
     for (0..100) |_| {
-        value = try optIntGenerator.generate(random, 10, std.testing.allocator);
+        value = try optIntGenerator.generate(&random, std.testing.allocator);
         if (value.value != null) {
             found_non_null = true;
             break;
@@ -815,12 +933,17 @@ test "vector generator produces vectors within range" {
         .child_config = .{ .min = -10, .max = 10 },
     });
 
-    var prng = std.Random.DefaultPrng.init(42);
-    const random = prng.random();
+    // Create a buffer for random bytes
+    var bytes: [4096]u8 = undefined;
+    load_bytes(&bytes);
+
+    // Create a finite PRNG
+    var prng = FinitePrng.init(&bytes);
+    var random = prng.random();
 
     // Generate a few vectors and check their values
     for (0..10) |_| {
-        const vector = try vectorGenerator.generate(random, 10, std.testing.allocator);
+        const vector = try vectorGenerator.generate(&random, std.testing.allocator);
         defer vector.deinit(std.testing.allocator);
 
         // Check each element is within bounds
@@ -840,12 +963,17 @@ test "tuple generator combines multiple generators" {
     // Combine them into a tuple generator
     const tupleGenerator = tuple(.{ intGenerator, boolGenerator, floatGenerator });
 
-    var prng = std.Random.DefaultPrng.init(42);
-    const random = prng.random();
+    // Create a buffer for random bytes
+    var bytes: [4096]u8 = undefined;
+    load_bytes(&bytes);
+
+    // Create a finite PRNG
+    var prng = FinitePrng.init(&bytes);
+    var random = prng.random();
 
     // Generate tuples and check their components
     for (0..10) |_| {
-        const value = try tupleGenerator.generate(random, 10, std.testing.allocator);
+        const value = try tupleGenerator.generate(&random, std.testing.allocator);
         defer value.deinit(std.testing.allocator);
 
         // Check that each component has the correct type and constraints
@@ -872,8 +1000,13 @@ test "oneOf selects from multiple generators" {
     // Combine them with oneOf
     const combinedGen = oneOf(.{ smallIntGen, mediumIntGen, largeIntGen }, null);
 
-    var prng = std.Random.DefaultPrng.init(42);
-    const random = prng.random();
+    // Create a buffer for random bytes
+    var bytes: [4096]u8 = undefined;
+    load_bytes(&bytes);
+
+    // Create a finite PRNG
+    var prng = FinitePrng.init(&bytes);
+    var random = prng.random();
 
     // Track which ranges we've seen
     var seen_small = false;
@@ -882,7 +1015,7 @@ test "oneOf selects from multiple generators" {
 
     // Generate many values to ensure we get all ranges
     for (0..1000) |_| {
-        const value = try combinedGen.generate(random, 10, std.testing.allocator);
+        const value = try combinedGen.generate(&random, std.testing.allocator);
         defer value.deinit(std.testing.allocator);
 
         if (value.value >= 1 and value.value <= 10) seen_small = true;
@@ -916,8 +1049,13 @@ test "oneOf respects weights" {
     const weights = [_]f32{ 0.9, 0.1 }; // 90% true, 10% false
     const weightedGen = oneOf(.{ trueGen, falseGen }, &weights);
 
-    var prng = std.Random.DefaultPrng.init(42);
-    const random = prng.random();
+    // Create a buffer for random bytes
+    var bytes: [4096]u8 = undefined;
+    load_bytes(&bytes);
+
+    // Create a finite PRNG
+    var prng = FinitePrng.init(&bytes);
+    var random = prng.random();
 
     // Count true/false values
     var true_count: usize = 0;
@@ -925,7 +1063,7 @@ test "oneOf respects weights" {
     const iterations = 1000;
 
     for (0..iterations) |_| {
-        const value = try weightedGen.generate(random, 10, std.testing.allocator);
+        const value = try weightedGen.generate(&random, std.testing.allocator);
         defer value.deinit(std.testing.allocator);
 
         if (value.value) true_count += 1 else false_count += 1;
@@ -939,15 +1077,20 @@ test "oneOf respects weights" {
 test "bool generator produces both true and false" {
     const boolGenerator = gen(bool, .{});
 
-    var prng = std.Random.DefaultPrng.init(42);
-    const random = prng.random();
+    // Create a buffer for random bytes
+    var bytes: [4096]u8 = undefined;
+    load_bytes(&bytes);
+
+    // Create a finite PRNG
+    var prng = FinitePrng.init(&bytes);
+    var random = prng.random();
 
     var seen_true = false;
     var seen_false = false;
 
     // Generate values until we've seen both true and false
     for (0..100) |_| {
-        const value = try boolGenerator.generate(random, 10, std.testing.allocator);
+        const value = try boolGenerator.generate(&random, std.testing.allocator);
         defer value.deinit(std.testing.allocator);
 
         if (value.value) seen_true = true else seen_false = true;
@@ -962,8 +1105,13 @@ test "bool generator produces both true and false" {
 test "bool shrinking works correctly" {
     const boolGenerator = gen(bool, .{});
 
-    var prng = std.Random.DefaultPrng.init(42);
-    const random = prng.random();
+    // Create a buffer for random bytes
+    var bytes: [4096]u8 = undefined;
+    load_bytes(&bytes);
+
+    // Create a finite PRNG
+    var prng = FinitePrng.init(&bytes);
+    var random = prng.random();
 
     // Generate a true value (we know shrinking only works on true)
     var value: Value(bool) = undefined;
@@ -971,7 +1119,7 @@ test "bool shrinking works correctly" {
 
     // Try to get a true value
     for (0..100) |_| {
-        value = try boolGenerator.generate(random, 10, std.testing.allocator);
+        value = try boolGenerator.generate(&random, std.testing.allocator);
         if (value.value) {
             found_true = true;
             break;

@@ -1,6 +1,15 @@
 const std = @import("std");
 const FinitePrng = @import("byte_slice_prng.zig");
 
+/// Byte position information for value generation
+pub const BytePosition = struct {
+    /// Start offset in the original byte slice
+    start: u32,
+
+    /// End offset in the original byte slice (bytes used)
+    end: u32,
+};
+
 /// Value wrapper that stores both a generated value and its associated context
 /// The context is crucial for effective shrinking:
 /// it makes the data-generation reproducible, even after multiple transforms.
@@ -19,37 +28,42 @@ pub fn Value(comptime T: type) type {
         /// This is called when the value is no longer needed
         context_deinit: ?*const fn (?*anyopaque, std.mem.Allocator) void,
 
-        /// Start offset in the original byte slice
-        byte_start: u32,
-        
-        /// End offset in the original byte slice (bytes used)
-        byte_end: u32,
+        /// Byte position information (optional for shrunk values)
+        byte_pos: ?BytePosition,
 
         /// Initialize a new Value with a given value and context
         pub fn init(
-            value: T, 
-            context: ?*anyopaque, 
+            value: T,
+            context: ?*anyopaque,
             context_deinit: ?*const fn (?*anyopaque, std.mem.Allocator) void,
-            byte_start: u32,
-            byte_end: u32
+            byte_pos_opt: ?BytePosition,
         ) Self {
             return .{
                 .value = value,
                 .context = context,
                 .context_deinit = context_deinit,
-                .byte_start = byte_start,
-                .byte_end = byte_end,
+                .byte_pos = byte_pos_opt,
             };
         }
 
-        /// Initialize a value with no context
-        pub fn initNoContext(value: T, byte_start: u32, byte_end: u32) Self {
+        /// Initialize a value with no context and optional byte positions
+        /// If byte_pos is null, this is a shrunk value with no connection to the original byte slice
+        pub fn initNoContext(value: T, byte_pos_opt: ?BytePosition) Self {
             return .{
                 .value = value,
                 .context = null,
                 .context_deinit = null,
-                .byte_start = byte_start,
-                .byte_end = byte_end,
+                .byte_pos = byte_pos_opt,
+            };
+        }
+
+        /// Initialize a value with no context and no byte positions (for shrunk values)
+        pub fn initShrunk(value: T) Self {
+            return .{
+                .value = value,
+                .context = null,
+                .context_deinit = null,
+                .byte_pos = null,
             };
         }
 
@@ -59,15 +73,21 @@ pub fn Value(comptime T: type) type {
                 self.context_deinit.?(self.context, allocator);
             }
         }
-        
-        /// Get the byte slice that generated this value
-        pub fn bytes(self: Self, original_bytes: []const u8) []const u8 {
-            return original_bytes[self.byte_start..self.byte_end];
+
+        /// Get the byte slice that generated this value, if available
+        pub fn bytes(self: Self, original_bytes: []const u8) ?[]const u8 {
+            return if (self.byte_pos) |pos|
+                original_bytes[pos.start..pos.end]
+            else
+                null;
         }
-        
-        /// Returns the number of bytes used to generate this value
-        pub fn byteLength(self: Self) u32 {
-            return self.byte_end - self.byte_start;
+
+        /// Returns the number of bytes used to generate this value, if available
+        pub fn byteLength(self: Self) ?u32 {
+            return if (self.byte_pos) |pos|
+                pos.end - pos.start
+            else
+                null;
         }
     };
 }
@@ -99,7 +119,7 @@ pub fn tuple(comptime generators: anytype) blk: {
 
             fn generate(random: *FinitePrng.FiniteRandom, allocator: std.mem.Allocator) error{ OutOfMemory, OutOfEntropy }!Value(TupleType) {
                 const start_pos = random.prng.fixed_buffer.pos;
-                
+
                 // Create a tuple context
                 const TupleContext = struct {
                     // Dynamic array to hold element contexts
@@ -151,15 +171,14 @@ pub fn tuple(comptime generators: anytype) blk: {
                         try context.element_deinits.append(null);
                     }
                 }
-                
+
                 const end_pos = random.prng.fixed_buffer.pos;
 
                 return Value(TupleType).init(
                     result,
                     @as(*anyopaque, @ptrCast(context)),
                     TupleContext.deinit,
-                    @intCast(start_pos),
-                    @intCast(end_pos)
+                    .{ .start = @intCast(start_pos), .end = @intCast(end_pos) },
                 );
             }
         }.generate,
@@ -245,6 +264,7 @@ pub fn tuple(comptime generators: anytype) blk: {
                                     }
                                 }
                             }.deinit,
+                            null, // These are shrunk values with no byte position
                         ));
                     }
                 }
@@ -302,7 +322,7 @@ pub fn oneOf(comptime generators: anytype, comptime weights: ?[]const f32) blk: 
 
             fn generate(random: *FinitePrng.FiniteRandom, allocator: std.mem.Allocator) error{ OutOfMemory, OutOfEntropy }!Value(T) {
                 const start_pos = random.prng.fixed_buffer.pos;
-                
+
                 const idx = if (Weights) |w|
                     try weightedChoice(random, w)
                 else
@@ -348,8 +368,7 @@ pub fn oneOf(comptime generators: anytype, comptime weights: ?[]const f32) blk: 
                             value.value,
                             @as(*anyopaque, @ptrCast(context)),
                             OneOfContext.deinit,
-                            @intCast(start_pos),
-                            @intCast(end_pos)
+                            .{ .start = @intCast(start_pos), .end = @intCast(end_pos) },
                         );
                     }
                 }
@@ -417,6 +436,7 @@ pub fn oneOf(comptime generators: anytype, comptime weights: ?[]const f32) blk: 
                                         }
                                     }
                                 }.deinit,
+                                null, // These are shrunk values with no byte position
                             );
                         }
 
@@ -499,7 +519,7 @@ pub fn Generator(comptime T: type) type {
         canShrinkWithoutContextFn: *const fn (value: T) bool,
 
         /// Generate a value with its context
-        /// 
+        ///
         /// Errors:
         /// - OutOfMemory: If memory allocation fails
         /// - OutOfEntropy: If the PRNG runs out of random data
@@ -546,10 +566,16 @@ fn boolGen(config: anytype) Generator(bool) {
 
     return Generator(bool){
         .generateFn = struct {
-            fn generate(random: std.Random, size: usize, allocator: std.mem.Allocator) error{OutOfMemory}!Value(bool) {
-                _ = size;
+            fn generate(random: *FinitePrng.FiniteRandom, allocator: std.mem.Allocator) error{ OutOfMemory, OutOfEntropy }!Value(bool) {
                 _ = allocator;
-                return Value(bool).initNoContext(random.boolean());
+                const start_pos = random.prng.fixed_buffer.pos;
+                const value = random.boolean();
+                const end_pos = random.prng.fixed_buffer.pos;
+                const value_result = try value;
+                return Value(bool).initNoContext(
+                    value_result,
+                    .{ .start = @intCast(start_pos), .end = @intCast(end_pos) },
+                );
             }
         }.generate,
 
@@ -560,7 +586,7 @@ fn boolGen(config: anytype) Generator(bool) {
                 // Only true can be shrunk (to false)
                 if (value) {
                     var result = try allocator.alloc(Value(bool), 1);
-                    result[0] = Value(bool).initNoContext(false);
+                    result[0] = Value(bool).initNoContext(false, null);
                     return ValueList(bool).init(result, allocator);
                 } else {
                     // Can't shrink false
@@ -598,21 +624,22 @@ fn intShrink(comptime T: type, value: T, context: ?*anyopaque, allocator: std.me
 
     // Strategy 1: Shrink towards 0 (divide by 2)
     if (value != 0) {
-        try shrink_candidates.append(Value(T).initNoContext(@divTrunc(value, 2)));
+        // TODO: switch to using .initShrink decl literal
+        try shrink_candidates.append(Value(T).initNoContext(@divTrunc(value, 2), null));
     }
 
     // Strategy 2: Try boundaries near 0
     if (value > 1) {
-        try shrink_candidates.append(Value(T).initNoContext(1));
-        try shrink_candidates.append(Value(T).initNoContext(0));
+        try shrink_candidates.append(Value(T).initNoContext(1, null));
+        try shrink_candidates.append(Value(T).initNoContext(0, null));
     } else if (value < -1) {
-        try shrink_candidates.append(Value(T).initNoContext(-1));
-        try shrink_candidates.append(Value(T).initNoContext(0));
+        try shrink_candidates.append(Value(T).initNoContext(-1, null));
+        try shrink_candidates.append(Value(T).initNoContext(0, null));
     }
 
     // Strategy 3: For negative numbers, try absolute value
     if (value < 0) {
-        try shrink_candidates.append(Value(T).initNoContext(-value));
+        try shrink_candidates.append(Value(T).initNoContext(-value, null));
     }
 
     return ValueList(T).init(try shrink_candidates.toOwnedSlice(), allocator);
@@ -623,7 +650,9 @@ fn arrayGen(comptime E: type, comptime len: usize, comptime child_gen: Generator
     return Generator([len]E){
         .generateFn = struct {
             const ChildGen = child_gen;
-            fn generate(random: std.Random, size: usize, allocator: std.mem.Allocator) error{OutOfMemory}!Value([len]E) {
+            fn generate(random: *FinitePrng.FiniteRandom, allocator: std.mem.Allocator) error{ OutOfMemory, OutOfEntropy }!Value([len]E) {
+                const start_pos = random.prng.fixed_buffer.pos;
+
                 // Create an array context to hold all element contexts
                 const ArrayContext = struct {
                     // Dynamic array to hold element contexts
@@ -661,7 +690,7 @@ fn arrayGen(comptime E: type, comptime len: usize, comptime child_gen: Generator
                 // Generate each element
                 var result: [len]E = undefined;
                 for (&result) |*elem| {
-                    const element_value = try ChildGen.generate(random, size, allocator);
+                    const element_value = try ChildGen.generate(random, allocator);
                     elem.* = element_value.value;
 
                     // Store the context if any
@@ -674,10 +703,13 @@ fn arrayGen(comptime E: type, comptime len: usize, comptime child_gen: Generator
                     }
                 }
 
+                const end_pos = random.prng.fixed_buffer.pos;
+
                 return Value([len]E).init(
                     result,
                     @as(*anyopaque, @ptrCast(context)),
                     ArrayContext.deinit,
+                    .{ .start = @intCast(start_pos), .end = @intCast(end_pos) },
                 );
             }
         }.generate,
@@ -762,6 +794,7 @@ fn arrayGen(comptime E: type, comptime len: usize, comptime child_gen: Generator
                                     }
                                 }
                             }.deinit,
+                            null,
                         ));
                     }
                 }
@@ -792,25 +825,31 @@ fn intGen(comptime T: type, config: anytype) Generator(T) {
             const Min = min;
             const Max = max;
 
-            fn generate(random: std.Random, size: usize, allocator: std.mem.Allocator) error{OutOfMemory}!Value(T) {
-                _ = size;
+            fn generate(random: *FinitePrng.FiniteRandom, allocator: std.mem.Allocator) error{ OutOfMemory, OutOfEntropy }!Value(T) {
                 _ = allocator;
+                const start_pos = random.prng.fixed_buffer.pos;
 
                 // Sometimes generate boundary values (20% of the time)
-                if (random.float(f32) < 0.2) {
+                // TODO: switch to using a RATIO
+                if (try random.float(f32) < 0.2) {
                     var boundaries: [7]T = undefined;
                     const count = getIntBoundaryValues(T, Min, Max, &boundaries);
 
-                    const index = random.intRangeLessThan(usize, 0, count);
-                    return Value(T).initNoContext(boundaries[index]);
+                    const index = try random.uintLessThan(usize, count);
+                    const end_pos = random.prng.fixed_buffer.pos;
+                    return Value(T).initNoContext(boundaries[index], .{ .start = @intCast(start_pos), .end = @intCast(end_pos) });
                 }
 
+                var value: T = undefined;
                 if (Max == std.math.maxInt(T)) {
                     // Special case for maximum value to avoid overflow
-                    return Value(T).initNoContext(random.intRangeAtMost(T, Min, Max));
+                    value = try random.intRangeAtMost(T, Min, Max);
                 } else {
-                    return Value(T).initNoContext(random.intRangeLessThan(T, Min, Max + 1));
+                    value = try random.intRangeLessThan(T, Min, Max + 1);
                 }
+
+                const end_pos = random.prng.fixed_buffer.pos;
+                return Value(T).initNoContext(value, .{ .start = @intCast(start_pos), .end = @intCast(end_pos) });
             }
         }.generate,
 
@@ -871,8 +910,9 @@ fn sliceGen(comptime E: type, comptime child_gen: Generator(E), config: anytype)
             const MinLen = min_len;
             const MaxLen = max_len;
 
-            fn generate(random: std.Random, size: usize, allocator: std.mem.Allocator) error{OutOfMemory}!Value([]E) {
-                const len = random.intRangeLessThan(usize, MinLen, MaxLen + 1);
+            fn generate(random: *FinitePrng.FiniteRandom, allocator: std.mem.Allocator) error{ OutOfMemory, OutOfEntropy }!Value([]E) {
+                const start_pos = random.prng.fixed_buffer.pos;
+                const len = try random.uintLessThan(usize, MaxLen - MinLen + 1) + MinLen;
 
                 // Create a slice context to hold all element contexts
                 const SliceContext = struct {
@@ -920,7 +960,7 @@ fn sliceGen(comptime E: type, comptime child_gen: Generator(E), config: anytype)
 
                 // Generate each element
                 for (result) |*elem| {
-                    const element_value = try ChildGen.generate(random, size, allocator);
+                    const element_value = try ChildGen.generate(random, allocator);
                     elem.* = element_value.value;
 
                     // Store the context if any
@@ -933,10 +973,13 @@ fn sliceGen(comptime E: type, comptime child_gen: Generator(E), config: anytype)
                     }
                 }
 
+                const end_pos = random.prng.fixed_buffer.pos;
+
                 return Value([]E).init(
                     result,
                     @as(*anyopaque, @ptrCast(context)),
                     SliceContext.deinit,
+                    .{ .start = @intCast(start_pos), .end = @intCast(end_pos) },
                 );
             }
         }.generate,
@@ -1015,6 +1058,7 @@ fn sliceGen(comptime E: type, comptime child_gen: Generator(E), config: anytype)
                                 }
                             }
                         }.deinit,
+                        null,
                     ));
                 }
 
@@ -1089,6 +1133,7 @@ fn sliceGen(comptime E: type, comptime child_gen: Generator(E), config: anytype)
                                     }
                                 }
                             }.deinit,
+                            null,
                         ));
                     }
                 }
@@ -1113,7 +1158,9 @@ fn pointerGen(comptime Child: type, comptime child_gen: Generator(Child)) Genera
         .generateFn = struct {
             const ChildGen = child_gen;
 
-            fn generate(random: std.Random, size: usize, allocator: std.mem.Allocator) error{OutOfMemory}!Value(*Child) {
+            fn generate(random: *FinitePrng.FiniteRandom, allocator: std.mem.Allocator) error{ OutOfMemory, OutOfEntropy }!Value(*Child) {
+                const start_pos = random.prng.fixed_buffer.pos;
+
                 // Create a pointer context
                 const PtrContext = struct {
                     ptr: *Child,
@@ -1139,7 +1186,7 @@ fn pointerGen(comptime Child: type, comptime child_gen: Generator(Child)) Genera
                 };
 
                 // Generate the child value
-                const child_value = try ChildGen.generate(random, size, allocator);
+                const child_value = try ChildGen.generate(random, allocator);
 
                 // Allocate memory for the pointer
                 const ptr = try allocator.create(Child);
@@ -1153,10 +1200,13 @@ fn pointerGen(comptime Child: type, comptime child_gen: Generator(Child)) Genera
                     .context_deinit = child_value.context_deinit,
                 };
 
+                const end_pos = random.prng.fixed_buffer.pos;
+
                 return Value(*Child).init(
                     ptr,
                     @as(*anyopaque, @ptrCast(context)),
                     PtrContext.deinit,
+                    .{ .start = @intCast(start_pos), .end = @intCast(end_pos) },
                 );
             }
         }.generate,
@@ -1225,6 +1275,7 @@ fn pointerGen(comptime Child: type, comptime child_gen: Generator(Child)) Genera
                                 }
                             }
                         }.deinit,
+                        null,
                     );
                 }
 
@@ -1252,21 +1303,24 @@ fn floatGen(comptime T: type, config: anytype) Generator(T) {
         .generateFn = struct {
             const Min = min;
             const Max = max;
-            fn generate(random: std.Random, size: usize, allocator: std.mem.Allocator) error{OutOfMemory}!Value(T) {
+            fn generate(random: *FinitePrng.FiniteRandom, allocator: std.mem.Allocator) error{ OutOfMemory, OutOfEntropy }!Value(T) {
                 _ = allocator;
-                _ = size;
+                const start_pos = random.prng.fixed_buffer.pos;
 
                 // Sometimes generate special values (20% of the time)
-                if (random.float(f32) < 0.2) {
+                if (try random.float(f32) < 0.2) {
                     var special_values: [8]T = undefined;
                     const count = getFloatSpecialValues(T, Min, Max, &special_values);
 
-                    const index = random.intRangeLessThan(usize, 0, count);
-                    return Value(T).initNoContext(special_values[index]);
+                    const index = try random.uintLessThan(usize, count);
+                    const end_pos = random.prng.fixed_buffer.pos;
+                    return Value(T).initNoContext(special_values[index], .{ .start = @intCast(start_pos), .end = @intCast(end_pos) });
                 }
 
                 // Otherwise generate a random value in the range
-                return Value(T).initNoContext(Min + (Max - Min) * random.float(T));
+                const value = Min + (Max - Min) * try random.float(T);
+                const end_pos = random.prng.fixed_buffer.pos;
+                return Value(T).initNoContext(value, .{ .start = @intCast(start_pos), .end = @intCast(end_pos) });
             }
         }.generate,
 
@@ -1293,27 +1347,27 @@ fn floatGen(comptime T: type, config: anytype) Generator(T) {
 
                 // Strategy 1: Shrink towards 0 (divide by 2)
                 if (value != 0) {
-                    try shrink_candidates.append(Value(T).initNoContext(value / 2));
+                    try shrink_candidates.append(Value(T).initNoContext(value / 2, null));
                 }
 
                 // Strategy 2: Try boundaries near 0
                 if (value > 1) {
-                    try shrink_candidates.append(Value(T).initNoContext(1));
-                    try shrink_candidates.append(Value(T).initNoContext(0));
+                    try shrink_candidates.append(Value(T).initNoContext(1, null));
+                    try shrink_candidates.append(Value(T).initNoContext(0, null));
                 } else if (value < -1) {
-                    try shrink_candidates.append(Value(T).initNoContext(-1));
-                    try shrink_candidates.append(Value(T).initNoContext(0));
+                    try shrink_candidates.append(Value(T).initNoContext(-1, null));
+                    try shrink_candidates.append(Value(T).initNoContext(0, null));
                 }
 
                 // Strategy 3: For negative numbers, try absolute value
                 if (value < 0) {
-                    try shrink_candidates.append(Value(T).initNoContext(-value));
+                    try shrink_candidates.append(Value(T).initNoContext(-value, null));
                 }
 
                 // Strategy 4: Try rounding to nearest integer if not already an integer
                 const rounded = @round(value);
                 if (value != rounded) {
-                    try shrink_candidates.append(Value(T).initNoContext(rounded));
+                    try shrink_candidates.append(Value(T).initNoContext(rounded, null));
                 }
 
                 // Filter to only include values in range
@@ -1460,7 +1514,8 @@ fn structGen(comptime T: type, config: anytype) Generator(T) {
 
     return Generator(T){
         .generateFn = struct {
-            fn generate(random: std.Random, size: usize, allocator: std.mem.Allocator) error{OutOfMemory}!Value(T) {
+            fn generate(random: *FinitePrng.FiniteRandom, allocator: std.mem.Allocator) error{ OutOfMemory, OutOfEntropy }!Value(T) {
+                const start_pos = random.prng.fixed_buffer.pos;
 
                 // Create a struct context to hold all field contexts
                 const StructContext = struct {
@@ -1510,7 +1565,7 @@ fn structGen(comptime T: type, config: anytype) Generator(T) {
                         const field_generator = gen(FieldType, field_config);
 
                         // Generate the field value
-                        const field_value = try field_generator.generate(random, size, allocator);
+                        const field_value = try field_generator.generate(random, allocator);
 
                         // Store the value
                         @field(result, field_name) = field_value.value;
@@ -1533,10 +1588,13 @@ fn structGen(comptime T: type, config: anytype) Generator(T) {
                     }
                 }
 
+                const end_pos = random.prng.fixed_buffer.pos;
+
                 return Value(T).init(
                     result,
                     @as(*anyopaque, @ptrCast(context)),
                     StructContext.deinit,
+                    .{ .start = @intCast(start_pos), .end = @intCast(end_pos) },
                 );
             }
         }.generate,
@@ -1635,9 +1693,11 @@ pub fn MappedGenerator(comptime T: type, comptime U: type) type {
         };
 
         /// Generate a mapped value
-        pub fn generate(self: MappedSelf, random: std.Random, size: usize, allocator: std.mem.Allocator) error{OutOfMemory}!Value(U) {
+        pub fn generate(self: MappedSelf, random: *FinitePrng.FiniteRandom, allocator: std.mem.Allocator) error{ OutOfMemory, OutOfEntropy }!Value(U) {
+            const start_pos = random.prng.fixed_buffer.pos;
+
             // Generate original value with context
-            const original = try self.parent.generate(random, size, allocator);
+            const original = try self.parent.generate(random, allocator);
 
             // Map the value
             const mapped_value = self.map_fn(original.value);
@@ -1650,10 +1710,13 @@ pub fn MappedGenerator(comptime T: type, comptime U: type) type {
                 .context_deinit = original.context_deinit,
             };
 
+            const end_pos = random.prng.fixed_buffer.pos;
+
             return Value(U).init(
                 mapped_value,
                 @as(*anyopaque, @ptrCast(context)),
                 MapContext.deinit,
+                .{ .start = @intCast(start_pos), .end = @intCast(end_pos) },
             );
         }
 
@@ -1691,6 +1754,7 @@ pub fn MappedGenerator(comptime T: type, comptime U: type) type {
                         mapped_value,
                         @as(*anyopaque, @ptrCast(new_ctx)),
                         MapContext.deinit,
+                        null,
                     );
                 }
 
@@ -1707,7 +1771,7 @@ pub fn MappedGenerator(comptime T: type, comptime U: type) type {
                         var shrunk_mapped = try allocator.alloc(Value(U), shrunk_originals.len());
 
                         for (shrunk_originals.values, 0..) |shrunk_original, i| {
-                            shrunk_mapped[i] = Value(U).initNoContext(self.map_fn(shrunk_original.value));
+                            shrunk_mapped[i] = Value(U).initNoContext(self.map_fn(shrunk_original.value), null);
                         }
 
                         return ValueList(U).init(shrunk_mapped, allocator);
@@ -1736,11 +1800,12 @@ fn enumGen(comptime T: type) Generator(T) {
     const enum_info = @typeInfo(T).@"enum";
     return Generator(T){
         .generateFn = struct {
-            fn generate(random: std.Random, size: usize, allocator: std.mem.Allocator) error{OutOfMemory}!Value(T) {
-                _ = size;
+            fn generate(random: *FinitePrng.FiniteRandom, allocator: std.mem.Allocator) error{ OutOfMemory, OutOfEntropy }!Value(T) {
                 _ = allocator;
-                const index = random.intRangeLessThan(usize, 0, enum_info.fields.len);
-                return Value(T).initNoContext(std.enums.values(T)[index]);
+                const start_pos = random.prng.fixed_buffer.pos;
+                const index = try random.uintLessThan(usize, enum_info.fields.len);
+                const end_pos = random.prng.fixed_buffer.pos;
+                return Value(T).initNoContext(std.enums.values(T)[index], .{ .start = @intCast(start_pos), .end = @intCast(end_pos) });
             }
         }.generate,
 
@@ -1777,7 +1842,9 @@ fn unionGen(comptime T: type, info: std.builtin.Type.Union, config: anytype) Gen
         .generateFn = struct {
             const FieldNames = field_names;
 
-            fn generate(random: std.Random, size: usize, allocator: std.mem.Allocator) error{OutOfMemory}!Value(T) {
+            fn generate(random: *FinitePrng.FiniteRandom, allocator: std.mem.Allocator) error{ OutOfMemory, OutOfEntropy }!Value(T) {
+                const start_pos = random.prng.fixed_buffer.pos;
+
                 // Create a union context
                 const UnionContext = struct {
                     tag: std.meta.Tag(T),
@@ -1800,7 +1867,7 @@ fn unionGen(comptime T: type, info: std.builtin.Type.Union, config: anytype) Gen
                 };
 
                 // Randomly select a field index
-                const field_index = random.intRangeLessThan(usize, 0, FieldNames.len);
+                const field_index = try random.uintLessThan(usize, FieldNames.len);
                 const field_name = FieldNames[field_index];
 
                 // Use inline for to handle each field at compile time
@@ -1814,7 +1881,7 @@ fn unionGen(comptime T: type, info: std.builtin.Type.Union, config: anytype) Gen
 
                         // Generate a value for the selected field
                         const field_generator = gen(field.type, field_config);
-                        const field_value = try field_generator.generate(random, size, allocator);
+                        const field_value = try field_generator.generate(random, allocator);
 
                         // Create the union value
                         const union_value = @unionInit(T, field.name, field_value.value);
@@ -1827,10 +1894,13 @@ fn unionGen(comptime T: type, info: std.builtin.Type.Union, config: anytype) Gen
                             .context_deinit = field_value.context_deinit,
                         };
 
+                        const end_pos = random.prng.fixed_buffer.pos;
+
                         return Value(T).init(
                             union_value,
                             @as(*anyopaque, @ptrCast(context)),
                             UnionContext.deinit,
+                            .{ .start = @intCast(start_pos), .end = @intCast(end_pos) },
                         );
                     }
                 }
@@ -1917,6 +1987,7 @@ fn unionGen(comptime T: type, info: std.builtin.Type.Union, config: anytype) Gen
                                         }
                                     }
                                 }.deinit,
+                                null,
                             );
                         }
 
@@ -1952,7 +2023,9 @@ fn optionalGen(comptime Child: type, comptime child_gen: Generator(Child), confi
             const ChildGen = child_gen;
             const NullProb = null_prob;
 
-            fn generate(random: std.Random, size: usize, allocator: std.mem.Allocator) error{OutOfMemory}!Value(?Child) {
+            fn generate(random: *FinitePrng.FiniteRandom, allocator: std.mem.Allocator) error{ OutOfMemory, OutOfEntropy }!Value(?Child) {
+                const start_pos = random.prng.fixed_buffer.pos;
+
                 // Create an optional context
                 const OptContext = struct {
                     is_null: bool,
@@ -1975,7 +2048,7 @@ fn optionalGen(comptime Child: type, comptime child_gen: Generator(Child), confi
                 };
 
                 // Generate null with probability NullProb
-                if (random.float(f32) < NullProb) {
+                if (try random.float(f32) < NullProb) {
                     // Create a context for null
                     const context = try allocator.create(OptContext);
                     context.* = .{
@@ -1984,14 +2057,17 @@ fn optionalGen(comptime Child: type, comptime child_gen: Generator(Child), confi
                         .context_deinit = null,
                     };
 
+                    const end_pos = random.prng.fixed_buffer.pos;
+
                     return Value(?Child).init(
                         null,
                         @as(*anyopaque, @ptrCast(context)),
                         OptContext.deinit,
+                        .{ .start = @intCast(start_pos), .end = @intCast(end_pos) },
                     );
                 } else {
                     // Generate a value
-                    const child_value = try ChildGen.generate(random, size, allocator);
+                    const child_value = try ChildGen.generate(random, allocator);
 
                     // Create a context for the value
                     const context = try allocator.create(OptContext);
@@ -2001,10 +2077,13 @@ fn optionalGen(comptime Child: type, comptime child_gen: Generator(Child), confi
                         .context_deinit = child_value.context_deinit,
                     };
 
+                    const end_pos = random.prng.fixed_buffer.pos;
+
                     return Value(?Child).init(
                         child_value.value,
                         @as(*anyopaque, @ptrCast(context)),
                         OptContext.deinit,
+                        .{ .start = @intCast(start_pos), .end = @intCast(end_pos) },
                     );
                 }
             }
@@ -2060,6 +2139,7 @@ fn optionalGen(comptime Child: type, comptime child_gen: Generator(Child), confi
                                 }
                             }
                         }.deinit,
+                        null,
                     );
 
                     // If the value itself can be shrunk, add those shrinks too
@@ -2109,6 +2189,7 @@ fn optionalGen(comptime Child: type, comptime child_gen: Generator(Child), confi
                                             }
                                         }
                                     }.deinit,
+                                    null,
                                 );
                             }
                         }
@@ -2137,7 +2218,9 @@ fn vectorGen(comptime E: type, comptime len: usize, comptime child_gen: Generato
     return Generator(@Vector(len, E)){
         .generateFn = struct {
             const ChildGen = child_gen;
-            fn generate(random: std.Random, size: usize, allocator: std.mem.Allocator) error{OutOfMemory}!Value(@Vector(len, E)) {
+            fn generate(random: *FinitePrng.FiniteRandom, allocator: std.mem.Allocator) error{ OutOfMemory, OutOfEntropy }!Value(@Vector(len, E)) {
+                const start_pos = random.prng.fixed_buffer.pos;
+
                 // Create a vector context (similar to array context)
                 const VectorContext = struct {
                     // Dynamic array to hold element contexts
@@ -2175,7 +2258,7 @@ fn vectorGen(comptime E: type, comptime len: usize, comptime child_gen: Generato
                 // Generate each element
                 var result_array: [len]E = undefined;
                 for (&result_array) |*elem| {
-                    const element_value = try ChildGen.generate(random, size, allocator);
+                    const element_value = try ChildGen.generate(random, allocator);
                     elem.* = element_value.value;
 
                     // Store the context if any
@@ -2188,10 +2271,13 @@ fn vectorGen(comptime E: type, comptime len: usize, comptime child_gen: Generato
                     }
                 }
 
+                const end_pos = random.prng.fixed_buffer.pos;
+
                 return Value(@Vector(len, E)).init(
                     @as(@Vector(len, E), result_array),
                     @as(*anyopaque, @ptrCast(context)),
                     VectorContext.deinit,
+                    .{ .start = @intCast(start_pos), .end = @intCast(end_pos) },
                 );
             }
         }.generate,
@@ -2282,6 +2368,7 @@ fn vectorGen(comptime E: type, comptime len: usize, comptime child_gen: Generato
                                     }
                                 }
                             }.deinit,
+                            null,
                         ));
                     }
                 }
@@ -2315,13 +2402,13 @@ pub fn FilteredGenerator(comptime T: type) type {
         filter_fn: *const fn (T) bool,
 
         /// Generate a value that passes the filter
-        pub fn generate(self: FilteredSelf, random: std.Random, size: usize, allocator: std.mem.Allocator) error{OutOfMemory}!Value(T) {
+        pub fn generate(self: FilteredSelf, random: *FinitePrng.FiniteRandom, allocator: std.mem.Allocator) error{ OutOfMemory, OutOfEntropy }!Value(T) {
             // Try a limited number of times to find a value that passes the filter
             var attempts: usize = 0;
             const max_attempts = 100;
 
             while (attempts < max_attempts) : (attempts += 1) {
-                const value = try self.parent.generate(random, size, allocator);
+                const value = try self.parent.generate(random, allocator);
                 if (self.filter_fn(value.value)) return value;
 
                 // Clean up the rejected value
@@ -2329,7 +2416,7 @@ pub fn FilteredGenerator(comptime T: type) type {
             }
 
             // If we can't find a value after max attempts, return the last one anyway
-            return self.parent.generate(random, size, allocator);
+            return try self.parent.generate(random, allocator);
         }
 
         /// Shrink a value, ensuring all shrunk values pass the filter
