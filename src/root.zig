@@ -1,13 +1,41 @@
-//! By convention, root.zig is the root source file when making a library. If
-//! you are making an executable, the convention is to delete this file and
-//! start with main.zig instead.
+//! ZLowCheck: A property-based testing library for Zig
+//!
+//! This library provides tools for property-based testing, including:
+//! - Generators for creating random test values
+//! - Properties for defining testable statements
+//! - Assertion utilities for running property tests
+
 const std = @import("std");
 const testing = std.testing;
 
-pub export fn add(a: i32, b: i32) i32 {
-    return a + b;
-}
+const generator = @import("generator.zig");
+pub const Generator = generator.Generator;
+pub const Value = generator.Value;
+pub const ValueList = generator.ValueList;
+pub const BytePosition = generator.BytePosition;
+pub const gen = generator.gen;
+pub const tuple = generator.tuple;
+pub const oneOf = generator.oneOf;
+pub const MappedGenerator = generator.MappedGenerator;
+pub const FilteredGenerator = generator.FilteredGenerator;
 
-test "basic add functionality" {
-    try testing.expect(add(3, 7) == 10);
+const property_mod = @import("property.zig");
+pub const Property = property_mod.Property;
+pub const PropertyResult = property_mod.PropertyResult;
+pub const property = property_mod.property;
+
+const assert_mod = @import("assert.zig");
+pub const assert = assert_mod.assert;
+pub const AssertConfig = assert_mod.AssertConfig;
+
+const finite_prng = @import("finite_prng.zig");
+pub const FinitePrng = finite_prng.FinitePrng;
+
+test {
+    std.testing.refAllDecls(@This());
+
+    _ = @import("finite_prng_test.zig");
+    _ = @import("generator_test.zig");
+    _ = @import("property_test.zig");
+    _ = @import("assert.zig");
 }

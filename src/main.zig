@@ -2,15 +2,12 @@
 //! you are building an executable. If you are making a library, the convention
 //! is to delete this file and start with root.zig instead.
 
-pub fn main() !void {}
+pub fn main() !void {
+    _ = lib.gen(i32, .{ .min = 10, .max = 20 });
+}
 
 test {
     std.testing.refAllDecls(@This());
-
-    _ = @import("finite_prng_test.zig");
-    _ = @import("generator_test.zig");
-    _ = @import("property_test.zig");
-    _ = @import("assert.zig");
 }
 
 const std = @import("std");
