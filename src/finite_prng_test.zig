@@ -1,6 +1,6 @@
 const std = @import("std");
 const testing = std.testing;
-const FinitePrng = @import("finite_prng.zig");
+const FinitePrng = @import("finite_prng");
 
 test "FinitePrng initialization" {
     const bytes = &[_]u8{ 0x01, 0x02, 0x03, 0x04 };
@@ -375,7 +375,7 @@ test "enumWeighted" {
     // Use a fixed set of bytes for deterministic testing
 
     var bytes_: [4096]u8 = undefined;
-    @import("test_helpers.zig").load_bytes(&bytes_);
+    @import("test_helpers").load_bytes(&bytes_);
     var prng = FinitePrng.init(&bytes_);
     var rand = prng.random();
 
@@ -393,7 +393,7 @@ test "enumWeighted" {
 
 test "chance" {
     var bytes: [4096]u8 = undefined;
-    @import("test_helpers.zig").load_bytes(&bytes);
+    @import("test_helpers").load_bytes(&bytes);
     var prng = FinitePrng.init(&bytes);
     var rand = prng.random();
 

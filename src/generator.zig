@@ -1,5 +1,5 @@
 const std = @import("std");
-const FinitePrng = @import("finite_prng.zig");
+const FinitePrng = @import("finite_prng");
 const FiniteRandom = FinitePrng.FiniteRandom;
 const Ratio = FinitePrng.Ratio;
 

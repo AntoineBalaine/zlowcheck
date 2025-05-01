@@ -47,7 +47,7 @@ pub fn assert(
     // Property failed - extract the counterexample
     if (failure_opt) |failure| {
         // Regenerate the counterexample using the same bytes that caused the failure
-        var finite_prng = @import("finite_prng.zig").init(failure.failure_bytes.?);
+        var finite_prng = @import("finite_prng").init(failure.failure_bytes.?);
         var random_for_example = finite_prng.random();
 
         // Generate the counterexample value
@@ -76,7 +76,7 @@ test assert {
     }.test_);
 
     var bytes: [4096]u8 = undefined;
-    @import("test_helpers.zig").load_bytes(&bytes);
+    @import("test_helpers").load_bytes(&bytes);
 
     // This should fail since we're generating negative numbers but requiring positive ones
     const result = try assert(positiveProperty, .{ .bytes = &bytes }, std.testing.allocator);

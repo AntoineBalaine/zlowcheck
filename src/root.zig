@@ -28,13 +28,11 @@ const assert_mod = @import("assert.zig");
 pub const assert = assert_mod.assert;
 pub const AssertConfig = assert_mod.AssertConfig;
 
-const finite_prng = @import("finite_prng.zig");
-pub const FinitePrng = finite_prng.FinitePrng;
+// pub const FinitePrng = @import("finite_prng");
 
 test {
     std.testing.refAllDecls(@This());
 
-    _ = @import("finite_prng_test.zig");
     _ = @import("generator_test.zig");
     _ = @import("property_test.zig");
     _ = @import("assert.zig");

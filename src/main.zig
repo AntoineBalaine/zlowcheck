@@ -3,7 +3,7 @@
 //! is to delete this file and start with root.zig instead.
 
 pub fn main() !void {
-    _ = lib.gen(i32, .{ .min = 10, .max = 20 });
+    // _ = prng.
 }
 
 test {
@@ -13,4 +13,5 @@ test {
 const std = @import("std");
 
 /// This imports the separate module containing `root.zig`. Take a look in `build.zig` for details.
-const lib = @import("zlowcheck_lib");
+const pbt = @import("zlowcheck");
+const prng = @import("finite_prng");

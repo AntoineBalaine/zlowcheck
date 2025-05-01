@@ -1,7 +1,7 @@
 const std = @import("std");
 const generator2 = @import("generator.zig");
-const FinitePrng = @import("finite_prng.zig");
-const load_bytes = @import("test_helpers.zig").load_bytes;
+const FinitePrng = @import("finite_prng");
+const load_bytes = @import("test_helpers").load_bytes;
 
 const gen = generator2.gen;
 const Value = generator2.Value;

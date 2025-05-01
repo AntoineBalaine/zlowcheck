@@ -367,3 +367,8 @@ pub fn MinArrayIndex(comptime Index: type) type {
     assert(index_info.signedness == .unsigned);
     return if (index_info.bits >= @typeInfo(usize).int.bits) usize else Index;
 }
+
+test {
+    std.testing.refAllDecls(@This());
+    _ = @import("finite_prng_test.zig");
+}
