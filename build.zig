@@ -88,11 +88,33 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_lib_unit_tests.step);
     test_step.dependOn(&run_prng_unit_tests.step);
+    docs_gen(
+        b,
+        .{ .target = target, .optimize = optimize },
+    );
     draft_no_module(
         b,
         .{ .prng_mod = prng_mod, .test_helpers_mod = test_helpers_mod },
         .{ .target = target, .optimize = optimize },
     );
+}
+
+fn docs_gen(b: *std.Build, build_config: anytype) void {
+    const docs_obj = b.addObject(.{
+        .name = "zlowcheck_docs",
+        .root_source_file = b.path("src/root.zig"),
+        .target = build_config.target,
+        .optimize = build_config.optimize,
+    });
+
+    const install_docs = b.addInstallDirectory(.{
+        .install_dir = .prefix,
+        .install_subdir = "docs",
+        .source_dir = docs_obj.getEmittedDocs(),
+    });
+
+    const docs_step = b.step("docs", "Generate library documentation");
+    docs_step.dependOn(&install_docs.step);
 }
 
 pub fn draft_no_module(b: *std.Build, modules: anytype, build_config: anytype) void {
