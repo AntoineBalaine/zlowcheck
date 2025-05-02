@@ -88,4 +88,33 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_lib_unit_tests.step);
     test_step.dependOn(&run_prng_unit_tests.step);
+    draft_no_module(
+        b,
+        .{ .prng_mod = prng_mod, .test_helpers_mod = test_helpers_mod },
+        .{ .target = target, .optimize = optimize },
+    );
+}
+
+pub fn draft_no_module(b: *std.Build, modules: anytype, build_config: anytype) void {
+    const draft_step = b.step("test-draft", "Run tests for draft_no_shrink module");
+
+    // Create a single module for the draft library
+    const draft_lib_mod = b.createModule(.{
+        .root_source_file = b.path("draft_no_shrink/draft_no_shrink_lib.zig"),
+        .target = build_config.target,
+        .optimize = build_config.optimize,
+    });
+
+    // Add dependencies to the draft library module
+    draft_lib_mod.addImport("finite_prng", modules.prng_mod);
+    draft_lib_mod.addImport("test_helpers", modules.test_helpers_mod);
+
+    // Create a single test for the draft library
+    const draft_tests = b.addTest(.{
+        .root_module = draft_lib_mod,
+    });
+
+    // Create the run artifact and connect it to the step
+    const run_draft_tests = b.addRunArtifact(draft_tests);
+    draft_step.dependOn(&run_draft_tests.step);
 }

@@ -4,8 +4,8 @@ const Generator = generator.Generator;
 const gen = generator.gen;
 const tuple = generator.tuple;
 const oneOf = generator.oneOf;
-const FinitePrng = @import("../finite_prng");
-const load_bytes = @import("../test_helpers.zig").load_bytes;
+const FinitePrng = @import("finite_prng");
+const load_bytes = @import("test_helpers").load_bytes;
 
 test "int generator produces values within range" {
     // Create a generator for integers between 10 and 20
