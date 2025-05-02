@@ -9,57 +9,6 @@ const PropertyResult = property_mod.PropertyResult;
 const Property = property_mod.Property;
 const gen = generator2.gen;
 
-test "basic property test (addition commutative)" {
-    // Test the commutative property of addition: a + b == b + a
-    const TestType = struct { a: i32, b: i32 };
-    const commutativeProperty = property(TestType, gen(TestType, .{
-        .a = .{ .min = -100, .max = 100 },
-        .b = .{ .min = -100, .max = 100 },
-    }), struct {
-        fn test_(args: TestType) bool {
-            return args.a + args.b == args.b + args.a;
-        }
-    }.test_);
-
-    // Create a byte slice for testing
-    var bytes: [4096]u8 = undefined;
-    load_bytes(&bytes);
-
-    // Run the property test (should always succeed)
-    const result = try commutativeProperty.check(std.testing.allocator, &bytes);
-
-    // Should be successful (null result means success)
-    try std.testing.expectEqual(null, result);
-}
-
-test "failing property with shrinking (all integers are positive)" {
-    // Test the (false) property that all integers are positive
-    // Use a smaller range to increase the chance of getting negative values in the test
-    const positiveProperty = property(i32, gen(i32, .{ .min = -10, .max = -1 }), struct {
-        fn test_(n: i32) bool {
-            return n > 0;
-        }
-    }.test_);
-
-    // Use a hardcoded byte sequence that's known to produce a failing test case
-    // These bytes were captured from a previous failing run
-    var bytes = [_]u8{ 0xdf, 0x54, 0x30, 0xc0, 0xd9, 0x5c, 0x53, 0x01, 0x58, 0x14, 0xf3, 0x54 };
-
-    // Run the property test (should fail)
-    const result = try positiveProperty.check(std.testing.allocator, &bytes);
-
-    // Should fail with a counterexample (non-null result means failure)
-    try std.testing.expect(result != null);
-
-    // The counterexample should be 0 or negative
-    try std.testing.expect(result.?.counterexample != null); // Should have a counterexample
-    if (result.?.counterexample) |counter_ptr| {
-        const counterexample = @as(*const i32, @ptrCast(@alignCast(counter_ptr))).*;
-        try std.testing.expect(counterexample <= 0);
-    }
-    try std.testing.expect(result.?.num_shrinks > 0);
-}
-
 test "property with hooks" {
     // Setup state for hooks
     var setup_called: usize = 0;

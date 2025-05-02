@@ -5,14 +5,15 @@ const Ratio = FinitePrng.Ratio;
 
 /// Byte position information for value generation
 pub const BytePosition = struct {
-    /// Start offset in the original byte slice
+    /// Start offset in the finite-prng’s byte slice
     start: u32,
 
-    /// End offset in the original byte slice (bytes used)
+    /// End offset in the finite-prng’s byte slice (bytes used)
     end: u32,
 };
 
-/// Value wrapper that stores both a generated value and its associated context
+/// Value wrapper that stores both a generated value and its associated context.
+///
 /// The context is crucial for effective shrinking:
 /// it makes the data-generation reproducible, even after multiple transforms.
 pub fn Value(comptime T: type) type {
@@ -285,6 +286,43 @@ pub fn tuple(comptime generators: anytype) blk: {
     };
 }
 
+test tuple {
+    // Create generators for different types
+    const intGenerator = comptime gen(i32, .{ .min = 1, .max = 100 });
+    const boolGenerator = comptime gen(bool, .{});
+    const floatGenerator = comptime gen(f64, .{ .min = -10.0, .max = 10.0 });
+
+    // Combine them into a tuple generator
+    const tupleGenerator = tuple(.{ intGenerator, boolGenerator, floatGenerator });
+
+    // Create a buffer for random bytes
+    var bytes: [4096]u8 = undefined;
+    @import("test_helpers").load_bytes(&bytes);
+
+    // Create a finite PRNG
+    var prng = FinitePrng.init(&bytes);
+    var random = prng.random();
+
+    // Generate tuples and check their components
+    for (0..10) |_| {
+        const value = try tupleGenerator.generate(&random, std.testing.allocator);
+        defer value.deinit(std.testing.allocator);
+
+        // Check that each component has the correct type and constraints
+        const int_value: i32 = value.value[0];
+        const bool_value: bool = value.value[1];
+        const float_value: f64 = value.value[2];
+
+        try std.testing.expect(int_value >= 1 and int_value <= 100);
+        try std.testing.expect(bool_value == true or bool_value == false);
+
+        // Skip NaN and infinity checks for float
+        if (!std.math.isNan(float_value) and !std.math.isInf(float_value)) {
+            try std.testing.expect(float_value >= -10.0 and float_value <= 10.0);
+        }
+    }
+}
+
 /// Choose between multiple generators
 pub fn oneOf(comptime generators: anytype, comptime weights: ?[]const u32) blk: {
     // Get the type from the first generator
@@ -470,6 +508,50 @@ pub fn oneOf(comptime generators: anytype, comptime weights: ?[]const u32) blk: 
     };
 }
 
+test oneOf {
+    // Create two boolean generators - one that always generates true, one that always generates false
+    const trueGen = comptime gen(bool, .{}).map(bool, struct {
+        fn alwaysTrue(_: bool) bool {
+            return true;
+        }
+    }.alwaysTrue, null);
+
+    const falseGen = comptime gen(bool, .{}).map(bool, struct {
+        fn alwaysFalse(_: bool) bool {
+            return false;
+        }
+    }.alwaysFalse, null);
+
+    // Create a heavily weighted generator that should mostly produce true
+    const weights = [_]u32{ 90, 10 }; // 90% true, 10% false
+    const weightedGen = oneOf(.{ trueGen, falseGen }, &weights);
+
+    // Create a buffer for random bytes
+    var bytes: [4096]u8 = undefined;
+    @import("test_helpers").load_bytes(&bytes);
+
+    // Create a finite PRNG
+    var prng = FinitePrng.init(&bytes);
+    var random = prng.random();
+
+    // Count true/false values
+    var true_count: usize = 0;
+    var false_count: usize = 0;
+    // Use fewer iterations to avoid running out of entropy
+    const iterations = 50;
+
+    for (0..iterations) |_| {
+        const value = try weightedGen.generate(&random, std.testing.allocator);
+        defer value.deinit(std.testing.allocator);
+
+        if (value.value) true_count += 1 else false_count += 1;
+    }
+
+    // We should get roughly 90% true values
+    const true_ratio = @as(f32, @floatFromInt(true_count)) / @as(f32, @floatFromInt(iterations));
+    try std.testing.expect(true_ratio > 0.8); // Allow some statistical variation
+}
+
 /// A list of values with the same type.
 ///
 /// These get output as lists of options
@@ -548,8 +630,12 @@ pub fn Generator(comptime T: type) type {
             return self.canShrinkWithoutContextFn(value);
         }
 
-        /// Map a generator to a new type
-        /// The map function provides a mechanism that allows us to apply a transform to a generated datum. And in the case where we need to shrink that datum (upon a predicate failure), it also provides a mechanism to: revert the transform, shrink, and re-apply. This unmap/shrink/remap can be applied for values coming from a generator, and also for values that have been provided without a generator. This allows library consumers to run pbt with pre-defined values, instead of being prisonners of the generators.
+        /// Map a generator to a new type.
+        ///
+        /// The map function provides a mechanism that allows us to apply a transform to a generated datum. And in the case where we need to shrink that datum (upon a predicate failure), it also provides a mechanism to: revert the transform, shrink, and re-apply.
+        ///
+        /// This unmap/shrink/remap can be applied for values coming from a generator, and also for values that have been provided without a generator. This allows library consumers to run pbt with pre-defined values, instead of being prisonners of the generators.
+        ///
         /// When it comes to un-map data coming from generators,it’s possible to confidently do so using the original generator’s context and the original value. For values not coming from a generator, we have to rely on a user-provided unmap function which can apply the reverse transform - though the confidence level with this approach is lower, since it’s not provided by the library.
         pub fn map(self: *const Self, comptime U: type, mapFn: *const fn (T) U, unmapFn: ?*const fn (U) ?T) MappedGenerator(T, U) {
             return MappedGenerator(T, U){
@@ -1671,6 +1757,31 @@ pub fn gen(comptime T: type, config: anytype) Generator(T) {
     };
 }
 
+test gen {
+    // Create a generator for integers between 10 and 20
+    const intGenerator = gen(i32, .{ .min = 10, .max = 20 });
+
+    // Create a buffer for random bytes
+    var bytes: [4096]u8 = undefined;
+
+    // Generate 20 values with different random seeds and check they're within range
+    for (0..20) |_| {
+        // Load random bytes for each test
+        @import("test_helpers").load_bytes(&bytes);
+
+        // Create a finite PRNG
+        var prng = FinitePrng.init(&bytes);
+        var random = prng.random();
+
+        // Generate the value
+        const value = try intGenerator.generate(&random, std.testing.allocator);
+        defer value.deinit(std.testing.allocator);
+
+        // Verify the value is within range
+        try std.testing.expect(value.value >= 10 and value.value <= 20);
+    }
+}
+
 pub fn MappedGenerator(comptime T: type, comptime U: type) type {
     return struct {
         const MappedSelf = @This();
@@ -1804,6 +1915,41 @@ pub fn MappedGenerator(comptime T: type, comptime U: type) type {
             return false;
         }
     };
+}
+
+test MappedGenerator {
+    // Create a mapped generator that forces odd values
+    const intGen_ = gen(i32, .{ .min = 0, .max = 10 });
+    // here’s our mapped generator:
+    const oddOnlyGen = intGen_.map(i32, struct {
+        pub fn map(n: i32) i32 {
+            // Make sure we always return odd numbers
+            return if (@rem(n, 2) == 0) n + 1 else n;
+        }
+    }.map, null);
+
+    // Property that requires even numbers (should always fail with our generator)
+    const evenOnlyProperty = @import("property.zig").property(i32, oddOnlyGen, struct {
+        fn test_(n: i32) bool {
+            return @rem(n, 2) == 0; // Will fail since the generator always returns odd numbers
+        }
+    }.test_);
+
+    // Create a byte slice for testing
+    var bytes: [4096]u8 = undefined;
+    @import("test_helpers").load_bytes(&bytes);
+
+    // Run the property test (should fail)
+    const result = try evenOnlyProperty.check(std.testing.allocator, &bytes);
+
+    // Should fail with a counterexample (non-null result means failure)
+    try std.testing.expect(result != null);
+
+    // The counterexample should be an odd number
+    if (result.?.counterexample) |counter_ptr| {
+        const counterexample = @as(*const i32, @ptrCast(@alignCast(counter_ptr))).*;
+        try std.testing.expect(@rem(counterexample, 2) == 1); // Should be odd
+    }
 }
 
 /// Generate enum values

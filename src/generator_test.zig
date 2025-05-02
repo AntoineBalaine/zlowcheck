@@ -946,43 +946,6 @@ test "vector generator produces vectors within range" {
     }
 }
 
-test "tuple generator combines multiple generators" {
-    // Create generators for different types
-    const intGenerator = comptime gen(i32, .{ .min = 1, .max = 100 });
-    const boolGenerator = comptime gen(bool, .{});
-    const floatGenerator = comptime gen(f64, .{ .min = -10.0, .max = 10.0 });
-
-    // Combine them into a tuple generator
-    const tupleGenerator = tuple(.{ intGenerator, boolGenerator, floatGenerator });
-
-    // Create a buffer for random bytes
-    var bytes: [4096]u8 = undefined;
-    load_bytes(&bytes);
-
-    // Create a finite PRNG
-    var prng = FinitePrng.init(&bytes);
-    var random = prng.random();
-
-    // Generate tuples and check their components
-    for (0..10) |_| {
-        const value = try tupleGenerator.generate(&random, std.testing.allocator);
-        defer value.deinit(std.testing.allocator);
-
-        // Check that each component has the correct type and constraints
-        const int_value: i32 = value.value[0];
-        const bool_value: bool = value.value[1];
-        const float_value: f64 = value.value[2];
-
-        try std.testing.expect(int_value >= 1 and int_value <= 100);
-        try std.testing.expect(bool_value == true or bool_value == false);
-
-        // Skip NaN and infinity checks for float
-        if (!std.math.isNan(float_value) and !std.math.isInf(float_value)) {
-            try std.testing.expect(float_value >= -10.0 and float_value <= 10.0);
-        }
-    }
-}
-
 test "oneOf selects from multiple generators" {
     // Create several integer generators with different ranges
     const smallIntGen = comptime gen(i32, .{ .min = 1, .max = 10 });
@@ -1021,50 +984,6 @@ test "oneOf selects from multiple generators" {
     try std.testing.expect(seen_small);
     try std.testing.expect(seen_medium);
     try std.testing.expect(seen_large);
-}
-
-test "oneOf respects weights" {
-    // Create two boolean generators - one that always generates true, one that always generates false
-    const trueGen = comptime gen(bool, .{}).map(bool, struct {
-        fn alwaysTrue(_: bool) bool {
-            return true;
-        }
-    }.alwaysTrue, null);
-
-    const falseGen = comptime gen(bool, .{}).map(bool, struct {
-        fn alwaysFalse(_: bool) bool {
-            return false;
-        }
-    }.alwaysFalse, null);
-
-    // Create a heavily weighted generator that should mostly produce true
-    const weights = [_]u32{ 90, 10 }; // 90% true, 10% false
-    const weightedGen = oneOf(.{ trueGen, falseGen }, &weights);
-
-    // Create a buffer for random bytes
-    var bytes: [4096]u8 = undefined;
-    load_bytes(&bytes);
-
-    // Create a finite PRNG
-    var prng = FinitePrng.init(&bytes);
-    var random = prng.random();
-
-    // Count true/false values
-    var true_count: usize = 0;
-    var false_count: usize = 0;
-    // Use fewer iterations to avoid running out of entropy
-    const iterations = 50;
-
-    for (0..iterations) |_| {
-        const value = try weightedGen.generate(&random, std.testing.allocator);
-        defer value.deinit(std.testing.allocator);
-
-        if (value.value) true_count += 1 else false_count += 1;
-    }
-
-    // We should get roughly 90% true values
-    const true_ratio = @as(f32, @floatFromInt(true_count)) / @as(f32, @floatFromInt(iterations));
-    try std.testing.expect(true_ratio > 0.8); // Allow some statistical variation
 }
 
 test "bool generator produces both true and false" {

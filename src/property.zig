@@ -59,7 +59,8 @@ pub const PropertyResult = struct {
     }
 };
 
-/// A property is a testable statement about inputs
+/// A property is a testable statement about inputs.
+///
 /// It combines a generator with a predicate function
 pub fn Property(comptime T: type, comptime GeneratorType: type) type {
     return struct {
@@ -329,8 +330,10 @@ pub fn Property(comptime T: type, comptime GeneratorType: type) type {
     };
 }
 
-/// Create a property that checks a condition on generated values
-/// Accepts any generator type that has the required methods
+/// Create a property that checks a condition on generated values.
+///
+/// Accepts any generator type that has the required methods:
+/// `generate` and `shrink`
 pub fn property(comptime T: type, generator: anytype, predicate: fn (T) bool) Property(T, @TypeOf(generator)) {
     // Validate that the generator has the required methods at compile time
     const GeneratorType = @TypeOf(generator);
@@ -353,4 +356,27 @@ pub fn property(comptime T: type, generator: anytype, predicate: fn (T) bool) Pr
     }
 
     return Property(T, GeneratorType).init(generator, predicate);
+}
+
+test property {
+    // Test the commutative property of addition: a + b == b + a
+    const TestType = struct { a: i32, b: i32 };
+    const commutativeProperty = property(TestType, @import("generator.zig").gen(TestType, .{
+        .a = .{ .min = -100, .max = 100 },
+        .b = .{ .min = -100, .max = 100 },
+    }), struct {
+        fn test_(args: TestType) bool {
+            return args.a + args.b == args.b + args.a;
+        }
+    }.test_);
+
+    // Create a byte slice for testing
+    var bytes: [4096]u8 = undefined;
+    @import("test_helpers").load_bytes(&bytes);
+
+    // Run the property test (should always succeed)
+    const result = try commutativeProperty.check(std.testing.allocator, &bytes);
+
+    // Should be successful (null result means success)
+    try std.testing.expectEqual(null, result);
 }
