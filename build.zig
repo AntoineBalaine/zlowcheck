@@ -9,7 +9,7 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
 
     const pbt_mod = b.createModule(.{
-        .root_source_file = b.path("src/root.zig"),
+        .root_source_file = b.path("src/zlowcheck.zig"),
         .target = target,
         .optimize = optimize,
     });
@@ -90,7 +90,7 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_prng_unit_tests.step);
     docs_gen(
         b,
-        .{ .target = target, .optimize = optimize },
+        .{ .prng_mod = prng_mod, .zlowcheck = pbt_lib },
     );
     draft_no_module(
         b,
@@ -99,18 +99,11 @@ pub fn build(b: *std.Build) void {
     );
 }
 
-fn docs_gen(b: *std.Build, build_config: anytype) void {
-    const docs_obj = b.addObject(.{
-        .name = "zlowcheck_docs",
-        .root_source_file = b.path("src/root.zig"),
-        .target = build_config.target,
-        .optimize = build_config.optimize,
-    });
-
+fn docs_gen(b: *std.Build, modules: anytype) void {
     const install_docs = b.addInstallDirectory(.{
         .install_dir = .prefix,
         .install_subdir = "docs",
-        .source_dir = docs_obj.getEmittedDocs(),
+        .source_dir = modules.zlowcheck.getEmittedDocs(),
     });
 
     const docs_step = b.step("docs", "Generate library documentation");

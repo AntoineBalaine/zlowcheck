@@ -1,4 +1,4 @@
-//! ZLowCheck: A property-based testing library for Zig
+//! ZlowCheck: A property-based testing library for Zig
 //!
 //! This library provides tools for property-based testing, including:
 //! - Generators for creating random test values
@@ -28,7 +28,7 @@ const assert_mod = @import("assert.zig");
 pub const assert = assert_mod.assert;
 pub const AssertConfig = assert_mod.AssertConfig;
 
-// pub const FinitePrng = @import("finite_prng");
+pub const FinitePrng = @import("finite_prng");
 
 test {
     std.testing.refAllDecls(@This());
