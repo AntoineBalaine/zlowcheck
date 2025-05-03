@@ -1,0 +1,38 @@
+name: Build and Deploy Documentation
+
+on:
+  push:
+    branches: [main] # Change to match your default branch name
+  pull_request:
+    branches: [main] # Change to match your default branch name
+  workflow_dispatch: # Allows manual triggering of the workflow
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    name: Build, Test, and Deploy Docs
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0 # Important for getting all history for proper versioning
+
+      - name: Setup Zig
+        uses: mlugg/setup-zig@v1
+        with:
+          version: 0.14.0 # Specify your desired Zig version here
+
+      - name: Build and test
+        run: zig build test
+
+      - name: Build documentation
+        run: zig build docs
+
+      - name: Deploy to GitHub Pages
+        if: github.ref == 'refs/heads/main' # Only deploy on main branch
+        uses: JamesIves/github-pages-deploy-action@v4
+        with:
+          folder: zig-out/docs
+          branch: gh-pages
+          clean: true # Automatically remove old files
