@@ -12,15 +12,15 @@ const BitReader = @import("bitreader_std.zig");
 
 const FinitePrng = @This();
 
-bytes_: []const u8,
-fixed_buffer: std.io.FixedBufferStream([]const u8),
+bytes_: []u8,
+fixed_buffer: std.io.FixedBufferStream([]u8),
 bit_reader: BitReader.BitReader(.big),
 
 pub const FinitePrngErr = error{
     OutOfEntropy,
 };
 
-pub fn init(bytes_: []const u8) FinitePrng {
+pub fn init(bytes_: []u8) FinitePrng {
     return .{
         .bytes_ = bytes_,
         .fixed_buffer = std.io.fixedBufferStream(bytes_),
@@ -89,7 +89,7 @@ pub const Ratio = struct {
 /// Will error once it runs out of data.
 pub const FiniteRandom = struct {
     prng: *FinitePrng,
-    reader: std.io.FixedBufferStream([]const u8).Reader,
+    reader: std.io.FixedBufferStream([]u8).Reader,
 
     // Methods that use the stored reader
     pub fn boolean(self: *@This()) !bool {
@@ -168,6 +168,47 @@ pub const FiniteRandom = struct {
         return @rem(rnd, less_than);
     }
 
+    pub fn uintLessThanMut(self: *@This(), comptime T: type, less_than: T) !T {
+        comptime assert(@typeInfo(T).int.signedness == .unsigned);
+        const bits = @typeInfo(T).int.bits;
+        assert(0 < less_than);
+
+        // adapted from:
+        //   http://www.pcg-random.org/posts/bounded-rands.html
+        // Calculate threshold using wrapping negation
+        const t = (0 -% less_than) % less_than;
+
+        // Generate random values until we find one that passes the threshold test
+        var x: T = undefined;
+        var m: @TypeOf(math.mulWide(T, 0, 0)) = undefined;
+        var l: T = undefined;
+
+        while (true) {
+            // Save the current position before reading
+            const read_pos = self.prng.fixed_buffer.pos;
+
+            x = try self.int(T);
+            m = math.mulWide(T, x, less_than);
+            l = @truncate(m);
+            if (l >= t) break;
+
+            // For standard byte-aligned types, this works fine
+            if (bits % 8 == 0) {
+                // Mutate the last byte read
+                const byte_ref = &self.prng.bytes_[self.prng.fixed_buffer.pos - 1];
+                byte_ref.* = byte_ref.* -% 1;
+
+                // Reset position
+                self.prng.fixed_buffer.pos = read_pos;
+            } else {
+                // For non-byte-aligned types, we'll use a simpler approach for now
+                // Just reset and try again (this will consume more entropy but is safer)
+                self.prng.fixed_buffer.pos = read_pos;
+            }
+        }
+
+        return @intCast(m >> bits);
+    }
     pub fn uintLessThan(self: *@This(), comptime T: type, less_than: T) !T {
         comptime assert(@typeInfo(T).int.signedness == .unsigned);
         const bits = @typeInfo(T).int.bits;

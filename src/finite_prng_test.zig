@@ -1,16 +1,18 @@
 const std = @import("std");
 const testing = std.testing;
-const FinitePrng = @import("finite_prng");
+
+const FinitePrng = @import("finite_prng.zig");
 
 test "FinitePrng initialization" {
-    const bytes = &[_]u8{ 0x01, 0x02, 0x03, 0x04 };
-    var prng = FinitePrng.init(bytes);
+    var bytes = [_]u8{ 0x01, 0x02, 0x03, 0x04 };
+
+    var prng = FinitePrng.init(&bytes);
     try testing.expect(!prng.isEmpty());
 }
 
 test "FinitePrng bytes" {
-    const bytes = &[_]u8{ 0x01, 0x02, 0x03, 0x04, 0x05, 0x06 };
-    var prng = FinitePrng.init(bytes);
+    var bytes = [_]u8{ 0x01, 0x02, 0x03, 0x04, 0x05, 0x06 };
+    var prng = FinitePrng.init(&bytes);
 
     var buf = [_]u8{0} ** 4;
     try prng.bytes(&buf);
@@ -30,8 +32,8 @@ test "FinitePrng bytes" {
 
 test "FinitePrng boolean with random() method" {
     // Test with known values - use a slice instead of an array
-    const bytes = &[_]u8{ 0x80, 0x00 }; // 10000000 00000000 in big endian
-    var prng = FinitePrng.init(bytes);
+    var bytes = [_]u8{ 0x80, 0x00 }; // 10000000 00000000 in big endian
+    var prng = FinitePrng.init(&bytes);
     var rand = prng.random();
 
     // First bit is 1
@@ -51,8 +53,8 @@ test "FinitePrng boolean with random() method" {
     try testing.expectEqual(false, try rand.boolean());
 
     // Test many booleans with a separate instance
-    const many_bytes = &[_]u8{0xFF} ** 4; // All 1s
-    var many_prng = FinitePrng.init(many_bytes);
+    var many_bytes = [_]u8{0xFF} ** 4; // All 1s
+    var many_prng = FinitePrng.init(&many_bytes);
     var many_rand = many_prng.random();
 
     for (0..32) |_| {
@@ -61,7 +63,7 @@ test "FinitePrng boolean with random() method" {
 }
 
 test "FinitePrng int with random() method" {
-    const bytes = [_]u8{ 0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0 };
+    var bytes = [_]u8{ 0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0 };
     var prng = FinitePrng.init(&bytes);
     var rand = prng.random();
 
@@ -80,7 +82,7 @@ test "FinitePrng int with random() method" {
     try testing.expectEqual(@as(i8, 0x12), try rand.int(i8));
 
     // Test out of entropy
-    const small_bytes = [_]u8{ 0x12, 0x34 };
+    var small_bytes = [_]u8{ 0x12, 0x34 };
     var small_prng = FinitePrng.init(&small_bytes);
     var small_rand = small_prng.random();
 
@@ -90,7 +92,7 @@ test "FinitePrng int with random() method" {
 
 test "FinitePrng uintLessThan with random() method" {
     // Use values that are above our limits to test the capping behavior
-    const bytes = [_]u8{ 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x05 };
+    var bytes = [_]u8{ 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x05 };
     var prng = FinitePrng.init(&bytes);
     var rand = prng.random();
 
@@ -113,7 +115,7 @@ test "FinitePrng enumValue with random() method" {
     };
 
     // Use enough bytes to ensure we can get all enum values
-    const bytes = [_]u8{ 0x00, 0x01 } ** 32; // Much more data
+    var bytes = [_]u8{ 0x00, 0x01 } ** 32; // Much more data
 
     var prng = FinitePrng.init(&bytes);
     var rand = prng.random();
@@ -128,7 +130,7 @@ test "FinitePrng enumValue with random() method" {
 }
 
 test "FinitePrng uintLessThanBiased with random() method" {
-    const bytes = [_]u8{ 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
+    var bytes = [_]u8{ 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
     var prng = FinitePrng.init(&bytes);
     var rand = prng.random();
 
@@ -144,7 +146,7 @@ test "FinitePrng uintLessThanBiased with random() method" {
 }
 
 test "FinitePrng uintAtMost with random() method" {
-    const bytes = [_]u8{ 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
+    var bytes = [_]u8{ 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
     var prng = FinitePrng.init(&bytes);
     var rand = prng.random();
 
@@ -157,7 +159,7 @@ test "FinitePrng uintAtMost with random() method" {
 }
 
 test "FinitePrng uintAtMostBiased with random() method" {
-    const bytes = [_]u8{ 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
+    var bytes = [_]u8{ 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
     var prng = FinitePrng.init(&bytes);
     var rand = prng.random();
 
@@ -170,7 +172,7 @@ test "FinitePrng uintAtMostBiased with random() method" {
 }
 
 test "FinitePrng intRangeLessThan and intRangeLessThanBiased with random() method" {
-    const bytes = [_]u8{0xFF} ** 32;
+    var bytes = [_]u8{0xFF} ** 32;
     var prng = FinitePrng.init(&bytes);
     var rand = prng.random();
 
@@ -196,7 +198,7 @@ test "FinitePrng intRangeLessThan and intRangeLessThanBiased with random() metho
 }
 
 test "FinitePrng intRangeAtMost and intRangeAtMostBiased with random() method" {
-    const bytes = [_]u8{ 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
+    var bytes = [_]u8{ 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
     var prng = FinitePrng.init(&bytes);
     var rand = prng.random();
 
@@ -218,7 +220,7 @@ test "FinitePrng intRangeAtMost and intRangeAtMostBiased with random() method" {
 }
 
 test "FinitePrng float with random() method" {
-    const bytes = [_]u8{ 0x3F, 0x80, 0x00, 0x00, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 }; // More data with non-zero values
+    var bytes = [_]u8{ 0x3F, 0x80, 0x00, 0x00, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 }; // More data with non-zero values
     var prng = FinitePrng.init(&bytes);
     var rand = prng.random();
 
@@ -232,7 +234,7 @@ test "FinitePrng float with random() method" {
 }
 
 test "FinitePrng floatNorm with random() method" {
-    const bytes = [_]u8{ 0x3F, 0x80, 0x00, 0x00, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 }; // More data with non-zero values
+    var bytes = [_]u8{ 0x3F, 0x80, 0x00, 0x00, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 }; // More data with non-zero values
     var prng = FinitePrng.init(&bytes);
     var rand = prng.random();
 
@@ -246,7 +248,7 @@ test "FinitePrng floatNorm with random() method" {
 }
 
 test "FinitePrng floatExp with random() method" {
-    const bytes = [_]u8{ 0x3F, 0x80, 0x00, 0x00, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 }; // More data with non-zero values
+    var bytes = [_]u8{ 0x3F, 0x80, 0x00, 0x00, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 }; // More data with non-zero values
     var prng = FinitePrng.init(&bytes);
     var rand = prng.random();
 
@@ -264,7 +266,7 @@ test "FinitePrng shuffle with random() method" {
     // For an array of length 5, you need at least 5 random values
     // Each random value for usize might need 8 bytes (on 64-bit systems)
     // So provide plenty of data to be safe
-    const bytes = [_]u8{
+    var bytes = [_]u8{
         0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
         0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18,
         0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28,
@@ -295,7 +297,7 @@ test "FinitePrng shuffle with random() method" {
 }
 
 test "FinitePrng weightedIndex with random() method" {
-    const bytes = [_]u8{ 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08 };
+    var bytes = [_]u8{ 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08 };
     var prng = FinitePrng.init(&bytes);
     var rand = prng.random();
     const weights = [_]u8{ 10, 20, 30, 40 };
@@ -322,7 +324,7 @@ test "FinitePrng MinArrayIndex" {
 }
 
 test "FinitePrng isEmpty" {
-    const bytes = [_]u8{ 0x01, 0x02 };
+    var bytes = [_]u8{ 0x01, 0x02 };
     var prng = FinitePrng.init(&bytes);
     var rand = prng.random();
     try testing.expect(!prng.isEmpty());
@@ -334,7 +336,7 @@ test "FinitePrng isEmpty" {
 }
 
 test "FinitePrng intRangeLessThanBiased with negative values using random() method" {
-    const bytes = [_]u8{ 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
+    var bytes = [_]u8{ 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
     var prng = FinitePrng.init(&bytes);
     var rand = prng.random();
 
@@ -355,7 +357,7 @@ test "FinitePrng intRangeLessThanBiased with negative values using random() meth
 }
 
 test "FinitePrng random() method creates a fresh reader" {
-    const bytes = [_]u8{ 0x12, 0x34, 0x56, 0x78 };
+    var bytes = [_]u8{ 0x12, 0x34, 0x56, 0x78 };
     var prng = FinitePrng.init(&bytes);
 
     // Create two separate random instances
@@ -375,7 +377,7 @@ test "enumWeighted" {
     // Use a fixed set of bytes for deterministic testing
 
     var bytes_: [4096]u8 = undefined;
-    @import("test_helpers").load_bytes(&bytes_);
+    @import("test_helpers.zig").load_bytes(&bytes_);
     var prng = FinitePrng.init(&bytes_);
     var rand = prng.random();
 
@@ -393,7 +395,7 @@ test "enumWeighted" {
 
 test "chance" {
     var bytes: [4096]u8 = undefined;
-    @import("test_helpers").load_bytes(&bytes);
+    @import("test_helpers.zig").load_bytes(&bytes);
     var prng = FinitePrng.init(&bytes);
     var rand = prng.random();
 
@@ -403,4 +405,135 @@ test "chance" {
         if (try rand.chance(.ratio(5, 7))) balance += 1 else balance -= 1;
     }
     try std.testing.expect(balance != 0);
+}
+
+test "Compare uintLessThan and uintLessThanMut entropy usage" {
+    // Test with different integer types and bounds
+    const TestCase = struct {
+        name: []const u8,
+        bound: u64,
+        iterations: usize,
+    };
+
+    const test_cases = [_]TestCase{
+        .{ .name = "u8 small bound", .bound = 10, .iterations = 100 },
+        .{ .name = "u8 medium bound", .bound = 100, .iterations = 100 },
+        .{ .name = "u8 large bound", .bound = 200, .iterations = 100 },
+        .{ .name = "u16 small bound", .bound = 100, .iterations = 50 },
+        .{ .name = "u16 medium bound", .bound = 1000, .iterations = 50 },
+        .{ .name = "u16 large bound", .bound = 10000, .iterations = 50 },
+        .{ .name = "u32 small bound", .bound = 1000, .iterations = 25 },
+        .{ .name = "u32 medium bound", .bound = 100000, .iterations = 25 },
+        .{ .name = "u32 large bound", .bound = 1000000000, .iterations = 25 },
+    };
+
+    std.debug.print("\nComparing entropy usage between uintLessThan and uintLessThanMut:\n", .{});
+    std.debug.print("Test Case | Original Bytes | Mutated Bytes | Bytes Saved | % Saved | Mutations\n", .{});
+    std.debug.print("---------+---------------+--------------+------------+--------+----------\n", .{});
+
+    var total_original_bytes: usize = 0;
+    var total_mutated_bytes: usize = 0;
+    var total_mutations: usize = 0;
+
+    inline for (test_cases) |test_case| {
+        // Run test for u8
+        if (std.mem.startsWith(u8, test_case.name, "u8")) {
+            try runComparisonTest(u8, test_case.bound, test_case.iterations, test_case.name, &total_original_bytes, &total_mutated_bytes, &total_mutations);
+        }
+        // Run test for u16
+        else if (std.mem.startsWith(u8, test_case.name, "u16")) {
+            try runComparisonTest(u16, test_case.bound, test_case.iterations, test_case.name, &total_original_bytes, &total_mutated_bytes, &total_mutations);
+        }
+        // Run test for u32
+        else if (std.mem.startsWith(u8, test_case.name, "u32")) {
+            try runComparisonTest(u32, test_case.bound, test_case.iterations, test_case.name, &total_original_bytes, &total_mutated_bytes, &total_mutations);
+        }
+    }
+
+    // Print overall statistics
+    const total_saved = total_original_bytes - total_mutated_bytes;
+    const total_percent_saved = if (total_original_bytes > 0)
+        @as(f64, @floatFromInt(total_saved)) / @as(f64, @floatFromInt(total_original_bytes)) * 100.0
+    else
+        0.0;
+
+    std.debug.print("---------+---------------+--------------+------------+--------+----------\n", .{});
+    std.debug.print("Total    | {d:13} | {d:12} | {d:10} | {d:6.2}% | {d:8}\n", .{ total_original_bytes, total_mutated_bytes, total_saved, total_percent_saved, total_mutations });
+}
+
+fn runComparisonTest(
+    comptime T: type,
+    bound: u64,
+    iterations: usize,
+    name: []const u8,
+    total_original_bytes: *usize,
+    total_mutated_bytes: *usize,
+    total_mutations: *usize,
+) !void {
+    // Create byte streams for testing
+    var original_bytes: [4096]u8 = undefined;
+    @import("test_helpers.zig").load_bytes(&original_bytes);
+
+    var mutated_bytes: [4096]u8 = undefined;
+    @memcpy(&mutated_bytes, &original_bytes);
+
+    // Test original method
+    var original_start_pos: usize = 0;
+    var original_end_pos: usize = 0;
+    {
+        var prng = FinitePrng.init(original_bytes[0..]);
+        var rand = prng.random();
+        original_start_pos = rand.prng.fixed_buffer.pos;
+
+        for (0..iterations) |_| {
+            const value = try rand.uintLessThan(T, @intCast(bound));
+            try std.testing.expect(value < bound);
+        }
+
+        original_end_pos = rand.prng.fixed_buffer.pos;
+    }
+
+    // Test mutation method
+    var mutated_start_pos: usize = 0;
+    var mutated_end_pos: usize = 0;
+    var mutation_count: usize = 0;
+    {
+        var prng = FinitePrng.init(mutated_bytes[0..]);
+        var rand = prng.random();
+        mutated_start_pos = rand.prng.fixed_buffer.pos;
+
+        for (0..iterations) |_| {
+            const value = try rand.uintLessThanMut(T, @intCast(bound));
+            try std.testing.expect(value < bound);
+        }
+
+        mutated_end_pos = rand.prng.fixed_buffer.pos;
+
+        // Count mutations by comparing bytes
+        for (0..original_bytes.len) |i| {
+            if (original_bytes[i] != mutated_bytes[i]) {
+                mutation_count += 1;
+            }
+        }
+    }
+
+    // Calculate statistics
+    const original_bytes_used = original_end_pos - original_start_pos;
+    const mutated_bytes_used = mutated_end_pos - mutated_start_pos;
+    const bytes_saved = if (original_bytes_used > mutated_bytes_used)
+        original_bytes_used - mutated_bytes_used
+    else
+        0;
+    const percent_saved = if (original_bytes_used > 0)
+        @as(f64, @floatFromInt(bytes_saved)) / @as(f64, @floatFromInt(original_bytes_used)) * 100.0
+    else
+        0.0;
+
+    // Update totals
+    total_original_bytes.* += original_bytes_used;
+    total_mutated_bytes.* += mutated_bytes_used;
+    total_mutations.* += mutation_count;
+
+    // Print results
+    std.debug.print("{s:9} | {d:13} | {d:12} | {d:10} | {d:6.2}% | {d:8}\n", .{ name, original_bytes_used, mutated_bytes_used, bytes_saved, percent_saved, mutation_count });
 }
