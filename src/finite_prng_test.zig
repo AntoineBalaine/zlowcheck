@@ -508,13 +508,20 @@ fn runComparisonTest(
         }
 
         mutated_end_pos = rand.prng.fixed_buffer.pos;
-
-        // Count mutations by comparing bytes
+        
+        // Get the actual mutation count from the PRNG
+        mutation_count = rand.prng.mutation_count;
+        
+        // Also count changed byte locations for comparison
+        var changed_locations: usize = 0;
         for (0..original_bytes.len) |i| {
             if (original_bytes[i] != mutated_bytes[i]) {
-                mutation_count += 1;
+                changed_locations += 1;
             }
         }
+        
+        // Optionally print both counts for analysis
+        // std.debug.print("Mutations: {}, Changed locations: {}\n", .{ mutation_count, changed_locations });
     }
 
     // Calculate statistics
