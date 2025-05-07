@@ -20,7 +20,6 @@ const FinitePrng = @This();
 
 bytes_: []u8,
 fixed_buffer: std.io.FixedBufferStream([]u8),
-mutation_count: usize = 0, // Track mutations for analysis
 
 pub const FinitePrngErr = error{
     OutOfEntropy,
@@ -30,7 +29,6 @@ pub fn init(bytes_: []u8) FinitePrng {
     return .{
         .bytes_ = bytes_,
         .fixed_buffer = std.io.fixedBufferStream(bytes_),
-        .mutation_count = 0,
     };
 }
 
@@ -46,7 +44,6 @@ pub fn bytes(self: *@This(), buf: []u8) !void {
 }
 pub fn random(self: *FinitePrng) FiniteRandom {
     self.fixed_buffer.pos = 0;
-    self.mutation_count = 0;
     return .{
         .prng = self,
         .reader = self.fixed_buffer.reader(),
@@ -99,7 +96,7 @@ pub const FiniteRandom = struct {
 
     // Methods that use the stored reader
     pub fn boolean(self: *@This()) !bool {
-        const byte = try self.reader.readByte();
+        const byte = self.reader.readByte() catch return error.OutOfEntropy;
         return byte & 1 == 1;
     }
 
@@ -147,23 +144,39 @@ pub const FiniteRandom = struct {
         unreachable;
     }
 
+    /// Reads bytes in big-endian order (most significant first)
     pub fn int(self: *@This(), comptime T: type) !T {
         const bits = @typeInfo(T).int.bits;
-        const bytes_needed = (bits + 7) / 8; // Round up to nearest byte
-        
-        var result: std.meta.Int(.unsigned, bits) = 0;
-        
-        // Read whole bytes
-        inline for (0..bytes_needed) |i| {
-            const byte = try self.reader.readByte();
-            result |= @as(std.meta.Int(.unsigned, bits), byte) << @intCast(i * 8);
+        const bytes_needed = std.math.divCeil(usize, bits, 8) catch unreachable;
+
+        const UT = std.meta.Int(.unsigned, bits);
+        const U = if (bits < 8) u8 else UT; // Use u8 as minimum size for small types
+
+        var rv: U = 0;
+
+        for (0..bytes_needed) |_| {
+            const byte = self.reader.readByte() catch |err| switch (err) {
+                error.EndOfStream => return error.OutOfEntropy,
+                else => |e| return e,
+            };
+
+            if (U == u8) rv = 0 else rv <<= 8;
+            rv |= byte;
         }
-        
+
+        if (bits < 8) {
+            if (@typeInfo(T).int.signedness == .signed) {
+                return @bitCast(@as(UT, @truncate(rv)));
+            } else {
+                return @as(T, @truncate(rv));
+            }
+        }
+
         // For signed types, handle sign extension if needed
         if (@typeInfo(T).int.signedness == .signed) {
-            return @bitCast(result);
+            return @bitCast(@as(UT, rv));
         } else {
-            return result;
+            return @intCast(rv);
         }
     }
 
@@ -179,73 +192,43 @@ pub const FiniteRandom = struct {
 
     pub fn uintLessThanMut(self: *@This(), comptime T: type, less_than: T) !T {
         comptime assert(@typeInfo(T).int.signedness == .unsigned);
+        const bits = @typeInfo(T).int.bits;
         assert(0 < less_than);
         if (less_than <= 1) return 0;
 
+        // adapted from:
+        //   http://www.pcg-random.org/posts/bounded-rands.html
         // Calculate threshold using wrapping negation
-        const t = (0 -% less_than) % less_than;
-        
+        const thresh = (0 -% less_than) % less_than;
         // Calculate bytes needed
-        const bits = @typeInfo(T).int.bits;
-        const bytes_needed = (bits + 7) / 8;
-        
-        // Track mutation attempts
-        var attempts: u8 = 0;
-        const max_attempts = 5;
 
         var x: T = undefined;
-        var m: @TypeOf(math.mulWide(T, 0, 0)) = undefined;
-        var l: T = undefined;
-
-        while (attempts < max_attempts) : (attempts += 1) {
-            // Save current position
+        var mult: @TypeOf(math.mulWide(T, 0, 0)) = undefined;
+        var first_found: ?T = null;
+        while (true) {
             const read_pos = self.prng.fixed_buffer.pos;
-            
-            // Try to generate a value
+
             x = try self.int(T);
-            m = math.mulWide(T, x, less_than);
-            l = @truncate(m);
-            
-            if (l >= t) break;
-            
+            if (first_found == null) first_found = x;
+            mult = math.mulWide(T, x, less_than);
+            if (@as(T, @truncate(mult)) >= thresh) break;
+
             // Reset position
             self.prng.fixed_buffer.pos = read_pos;
-            
-            // Apply different mutation strategies based on attempt number
-            switch (attempts) {
-                0 => {
-                    // First attempt: decrement the most significant byte
-                    self.prng.bytes_[read_pos + bytes_needed - 1] -%= 1;
-                },
-                1 => {
-                    // Second attempt: increment the most significant byte
-                    self.prng.bytes_[read_pos + bytes_needed - 1] +%= 1;
-                },
-                2 => {
-                    // Third attempt: flip bits in the most significant byte
-                    self.prng.bytes_[read_pos + bytes_needed - 1] ^= 0x55;
-                },
-                3 => {
-                    // Fourth attempt: modify all bytes
-                    for (0..bytes_needed) |i| {
-                        if (read_pos + i < self.prng.bytes_.len) {
-                            self.prng.bytes_[read_pos + i] -%= 1;
-                        }
-                    }
-                },
-                4 => {
-                    // Last attempt: invert the most significant byte
-                    self.prng.bytes_[read_pos + bytes_needed - 1] = ~self.prng.bytes_[read_pos + bytes_needed - 1];
-                },
-                else => unreachable,
+
+            // if (read_pos == 0) continue;
+            const byte_ref = &self.prng.fixed_buffer.buffer[read_pos];
+            const new_val = byte_ref.* -% 1;
+            byte_ref.* = new_val;
+            if (new_val == first_found.?) {
+                std.debug.print("ALERT ALERT", .{});
+                return error.OutOfEntropy;
             }
-            
-            self.prng.mutation_count += 1;
         }
-        
-        // If we've exhausted our mutation attempts, just use the last value
-        return @intCast(m >> bits);
+
+        return @intCast(mult >> bits);
     }
+
     pub fn uintLessThan(self: *@This(), comptime T: type, less_than: T) !T {
         comptime assert(@typeInfo(T).int.signedness == .unsigned);
         const bits = @typeInfo(T).int.bits;

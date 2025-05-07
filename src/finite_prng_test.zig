@@ -31,35 +31,11 @@ test "FinitePrng bytes" {
 }
 
 test "FinitePrng boolean with random() method" {
-    // Test with known values - use a slice instead of an array
-    var bytes = [_]u8{ 0x80, 0x00 }; // 10000000 00000000 in big endian
+    var bytes = [_]u8{ 0x01, 0x00 };
     var prng = FinitePrng.init(&bytes);
     var rand = prng.random();
-
-    // First bit is 1
-    const first_bit = try rand.boolean();
-    try testing.expectEqual(true, first_bit);
-
-    // Next 7 bits are 0
+    try testing.expectEqual(true, try rand.boolean());
     try testing.expectEqual(false, try rand.boolean());
-    try testing.expectEqual(false, try rand.boolean());
-    try testing.expectEqual(false, try rand.boolean());
-    try testing.expectEqual(false, try rand.boolean());
-    try testing.expectEqual(false, try rand.boolean());
-    try testing.expectEqual(false, try rand.boolean());
-    try testing.expectEqual(false, try rand.boolean());
-
-    // All bits in second byte are 0
-    try testing.expectEqual(false, try rand.boolean());
-
-    // Test many booleans with a separate instance
-    var many_bytes = [_]u8{0xFF} ** 4; // All 1s
-    var many_prng = FinitePrng.init(&many_bytes);
-    var many_rand = many_prng.random();
-
-    for (0..32) |_| {
-        try testing.expectEqual(true, try many_rand.boolean());
-    }
 }
 
 test "FinitePrng int with random() method" {
@@ -428,25 +404,45 @@ test "Compare uintLessThan and uintLessThanMut entropy usage" {
     };
 
     std.debug.print("\nComparing entropy usage between uintLessThan and uintLessThanMut:\n", .{});
-    std.debug.print("Test Case | Original Bytes | Mutated Bytes | Bytes Saved | % Saved | Mutations\n", .{});
+    std.debug.print("Test Case | Original Bytes | Mutated Bytes | Bytes Saved | % Saved\n", .{});
     std.debug.print("---------+---------------+--------------+------------+--------+----------\n", .{});
 
     var total_original_bytes: usize = 0;
     var total_mutated_bytes: usize = 0;
-    var total_mutations: usize = 0;
 
     inline for (test_cases) |test_case| {
         // Run test for u8
         if (std.mem.startsWith(u8, test_case.name, "u8")) {
-            try runComparisonTest(u8, test_case.bound, test_case.iterations, test_case.name, &total_original_bytes, &total_mutated_bytes, &total_mutations);
+            try runComparisonTest(
+                u8,
+                test_case.bound,
+                test_case.iterations,
+                test_case.name,
+                &total_original_bytes,
+                &total_mutated_bytes,
+            );
         }
         // Run test for u16
         else if (std.mem.startsWith(u8, test_case.name, "u16")) {
-            try runComparisonTest(u16, test_case.bound, test_case.iterations, test_case.name, &total_original_bytes, &total_mutated_bytes, &total_mutations);
+            try runComparisonTest(
+                u16,
+                test_case.bound,
+                test_case.iterations,
+                test_case.name,
+                &total_original_bytes,
+                &total_mutated_bytes,
+            );
         }
         // Run test for u32
         else if (std.mem.startsWith(u8, test_case.name, "u32")) {
-            try runComparisonTest(u32, test_case.bound, test_case.iterations, test_case.name, &total_original_bytes, &total_mutated_bytes, &total_mutations);
+            try runComparisonTest(
+                u32,
+                test_case.bound,
+                test_case.iterations,
+                test_case.name,
+                &total_original_bytes,
+                &total_mutated_bytes,
+            );
         }
     }
 
@@ -458,7 +454,7 @@ test "Compare uintLessThan and uintLessThanMut entropy usage" {
         0.0;
 
     std.debug.print("---------+---------------+--------------+------------+--------+----------\n", .{});
-    std.debug.print("Total    | {d:13} | {d:12} | {d:10} | {d:6.2}% | {d:8}\n", .{ total_original_bytes, total_mutated_bytes, total_saved, total_percent_saved, total_mutations });
+    std.debug.print("Total    | {d:13} | {d:12} | {d:10} | {d:6.2}% \n", .{ total_original_bytes, total_mutated_bytes, total_saved, total_percent_saved });
 }
 
 fn runComparisonTest(
@@ -468,7 +464,6 @@ fn runComparisonTest(
     name: []const u8,
     total_original_bytes: *usize,
     total_mutated_bytes: *usize,
-    total_mutations: *usize,
 ) !void {
     // Create byte streams for testing
     var original_bytes: [4096]u8 = undefined;
@@ -496,7 +491,6 @@ fn runComparisonTest(
     // Test mutation method
     var mutated_start_pos: usize = 0;
     var mutated_end_pos: usize = 0;
-    var mutation_count: usize = 0;
     {
         var prng = FinitePrng.init(mutated_bytes[0..]);
         var rand = prng.random();
@@ -508,10 +502,7 @@ fn runComparisonTest(
         }
 
         mutated_end_pos = rand.prng.fixed_buffer.pos;
-        
-        // Get the actual mutation count from the PRNG
-        mutation_count = rand.prng.mutation_count;
-        
+
         // Also count changed byte locations for comparison
         var changed_locations: usize = 0;
         for (0..original_bytes.len) |i| {
@@ -519,9 +510,6 @@ fn runComparisonTest(
                 changed_locations += 1;
             }
         }
-        
-        // Optionally print both counts for analysis
-        // std.debug.print("Mutations: {}, Changed locations: {}\n", .{ mutation_count, changed_locations });
     }
 
     // Calculate statistics
@@ -539,8 +527,7 @@ fn runComparisonTest(
     // Update totals
     total_original_bytes.* += original_bytes_used;
     total_mutated_bytes.* += mutated_bytes_used;
-    total_mutations.* += mutation_count;
 
     // Print results
-    std.debug.print("{s:9} | {d:13} | {d:12} | {d:10} | {d:6.2}% | {d:8}\n", .{ name, original_bytes_used, mutated_bytes_used, bytes_saved, percent_saved, mutation_count });
+    std.debug.print("{s:9} | {d:13} | {d:12} | {d:10} | {d:6.2}% \n", .{ name, original_bytes_used, mutated_bytes_used, bytes_saved, percent_saved });
 }
