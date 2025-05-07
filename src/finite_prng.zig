@@ -192,7 +192,6 @@ pub const FiniteRandom = struct {
 
     pub fn uintLessThanMut(self: *@This(), comptime T: type, less_than: T) !T {
         comptime assert(@typeInfo(T).int.signedness == .unsigned);
-        const bits = @typeInfo(T).int.bits;
         assert(0 < less_than);
         if (less_than <= 1) return 0;
 
@@ -200,30 +199,122 @@ pub const FiniteRandom = struct {
         //   http://www.pcg-random.org/posts/bounded-rands.html
         // Calculate threshold using wrapping negation
         const thresh = (0 -% less_than) % less_than;
-        // Calculate bytes needed
+        
+        // Calculate bits for return value and bytes needed
+        const bits = @typeInfo(T).int.bits;
+        const bytes_needed = std.math.divCeil(usize, bits, 8) catch unreachable;
 
         var x: T = undefined;
         var mult: @TypeOf(math.mulWide(T, 0, 0)) = undefined;
-        var first_found: ?T = null;
-        while (true) {
-            const read_pos = self.prng.fixed_buffer.pos;
+        var first_value: ?T = null;
+        
+        // Track mutation attempts
+        var attempts: u8 = 0;
+        const max_attempts = 10; // Increased from 5 to give more chances
 
+        while (attempts < max_attempts) : (attempts += 1) {
+            // Save current position
+            const read_pos = self.prng.fixed_buffer.pos;
+            
+            // Try to generate a value
             x = try self.int(T);
-            if (first_found == null) first_found = x;
+            if (first_value == null) first_value = x;
+            
             mult = math.mulWide(T, x, less_than);
             if (@as(T, @truncate(mult)) >= thresh) break;
-
+            
             // Reset position
             self.prng.fixed_buffer.pos = read_pos;
-
-            // if (read_pos == 0) continue;
-            const byte_ref = &self.prng.fixed_buffer.buffer[read_pos];
-            const new_val = byte_ref.* -% 1;
-            byte_ref.* = new_val;
-            if (new_val == first_found.?) {
-                std.debug.print("ALERT ALERT", .{});
-                return error.OutOfEntropy;
+            
+            // Skip mutation if at the beginning of the buffer
+            if (read_pos == 0) continue;
+            
+            // Apply different mutation strategies based on attempt number
+            switch (attempts) {
+                0 => {
+                    // First attempt: decrement the last byte read
+                    if (read_pos > 0) {
+                        const byte_ref = &self.prng.bytes_[read_pos - 1];
+                        byte_ref.* = byte_ref.* -% 1;
+                    }
+                },
+                1 => {
+                    // Second attempt: increment the last byte read
+                    if (read_pos > 0) {
+                        const byte_ref = &self.prng.bytes_[read_pos - 1];
+                        byte_ref.* = byte_ref.* +% 1;
+                    }
+                },
+                2 => {
+                    // Third attempt: flip bits in the last byte read
+                    if (read_pos > 0) {
+                        const byte_ref = &self.prng.bytes_[read_pos - 1];
+                        byte_ref.* ^= 0x55; // 01010101 pattern
+                    }
+                },
+                3 => {
+                    // Fourth attempt: modify all bytes that were read
+                    var i: usize = 0;
+                    while (i < bytes_needed and read_pos > i) : (i += 1) {
+                        const byte_ref = &self.prng.bytes_[read_pos - i - 1];
+                        byte_ref.* = byte_ref.* -% 1;
+                    }
+                },
+                4 => {
+                    // Fifth attempt: invert the last byte read
+                    if (read_pos > 0) {
+                        const byte_ref = &self.prng.bytes_[read_pos - 1];
+                        byte_ref.* = ~byte_ref.*;
+                    }
+                },
+                5 => {
+                    // Sixth attempt: add a larger increment to the last byte
+                    if (read_pos > 0) {
+                        const byte_ref = &self.prng.bytes_[read_pos - 1];
+                        byte_ref.* +%= 10;
+                    }
+                },
+                6 => {
+                    // Seventh attempt: subtract a larger decrement from the last byte
+                    if (read_pos > 0) {
+                        const byte_ref = &self.prng.bytes_[read_pos - 1];
+                        byte_ref.* -%= 10;
+                    }
+                },
+                7 => {
+                    // Eighth attempt: flip every bit in the last byte
+                    if (read_pos > 0) {
+                        const byte_ref = &self.prng.bytes_[read_pos - 1];
+                        byte_ref.* ^= 0xFF;
+                    }
+                },
+                8 => {
+                    // Ninth attempt: set the last byte to a random value
+                    if (read_pos > 0) {
+                        const byte_ref = &self.prng.bytes_[read_pos - 1];
+                        byte_ref.* = @truncate(@as(u64, @bitCast(std.time.milliTimestamp())) & 0xFF);
+                    }
+                },
+                else => {
+                    // Last resort: try a completely different approach
+                    // Set all bytes to their bitwise complement
+                    var i: usize = 0;
+                    while (i < bytes_needed and read_pos > i) : (i += 1) {
+                        const byte_ref = &self.prng.bytes_[read_pos - i - 1];
+                        byte_ref.* = ~byte_ref.*;
+                    }
+                },
             }
+            
+            // Safety check: if we've cycled back to the first value, break to avoid infinite loop
+            if (attempts > 0 and x == first_value) {
+                break;
+            }
+        }
+
+        // If we've exhausted all attempts and still haven't found a valid value
+        if (attempts >= max_attempts) {
+            return error.OutOfEntropy;
         }
 
         return @intCast(mult >> bits);
