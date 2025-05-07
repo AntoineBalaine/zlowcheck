@@ -190,47 +190,56 @@ pub const FiniteRandom = struct {
         return @rem(rnd, less_than);
     }
 
+    /// falls back to biased if it can’t find a value
     pub fn uintLessThanMut(self: *@This(), comptime T: type, less_than: T) !T {
         comptime assert(@typeInfo(T).int.signedness == .unsigned);
         assert(0 < less_than);
         if (less_than <= 1) return 0;
 
-        // adapted from:
-        //   http://www.pcg-random.org/posts/bounded-rands.html
         // Calculate threshold using wrapping negation
         const thresh = (0 -% less_than) % less_than;
-        
-        // Calculate bits for return value and bytes needed
+
+        // Calculate bits for return value
         const bits = @typeInfo(T).int.bits;
+
+        // Save the original position
+        const original_pos = self.prng.fixed_buffer.pos;
+
+        // Store the original bytes that we'll read
         const bytes_needed = std.math.divCeil(usize, bits, 8) catch unreachable;
+        var original_value: T = undefined;
+
+        // Read the bytes but don't advance the position yet
+        {
+            const temp_pos = self.prng.fixed_buffer.pos;
+            original_value = try self.int(T);
+            self.prng.fixed_buffer.pos = temp_pos; // Reset position
+        }
 
         var x: T = undefined;
         var mult: @TypeOf(math.mulWide(T, 0, 0)) = undefined;
-        var first_value: ?T = null;
-        
-        // Track mutation attempts
-        var attempts: u8 = 0;
-        const max_attempts = 10; // Increased from 5 to give more chances
+        // Try unbiased approach with mutations
+        var attempts: u16 = 0;
+        const max_attempts = 2000;
 
         while (attempts < max_attempts) : (attempts += 1) {
             // Save current position
             const read_pos = self.prng.fixed_buffer.pos;
-            
+
             // Try to generate a value
             x = try self.int(T);
-            if (first_value == null) first_value = x;
-            
             mult = math.mulWide(T, x, less_than);
+
             if (@as(T, @truncate(mult)) >= thresh) break;
-            
+
             // Reset position
             self.prng.fixed_buffer.pos = read_pos;
-            
+
             // Skip mutation if at the beginning of the buffer
             if (read_pos == 0) continue;
-            
+
             // Apply different mutation strategies based on attempt number
-            switch (attempts) {
+            switch (attempts % 8) {
                 0 => {
                     // First attempt: decrement the last byte read
                     if (read_pos > 0) {
@@ -281,40 +290,23 @@ pub const FiniteRandom = struct {
                         byte_ref.* -%= 10;
                     }
                 },
-                7 => {
+                else => {
                     // Eighth attempt: flip every bit in the last byte
                     if (read_pos > 0) {
                         const byte_ref = &self.prng.bytes_[read_pos - 1];
                         byte_ref.* ^= 0xFF;
                     }
                 },
-                8 => {
-                    // Ninth attempt: set the last byte to a random value
-                    if (read_pos > 0) {
-                        const byte_ref = &self.prng.bytes_[read_pos - 1];
-                        byte_ref.* = @truncate(@as(u64, @bitCast(std.time.milliTimestamp())) & 0xFF);
-                    }
-                },
-                else => {
-                    // Last resort: try a completely different approach
-                    // Set all bytes to their bitwise complement
-                    var i: usize = 0;
-                    while (i < bytes_needed and read_pos > i) : (i += 1) {
-                        const byte_ref = &self.prng.bytes_[read_pos - i - 1];
-                        byte_ref.* = ~byte_ref.*;
-                    }
-                },
-            }
-            
-            // Safety check: if we've cycled back to the first value, break to avoid infinite loop
-            if (attempts > 0 and x == first_value) {
-                break;
             }
         }
 
-        // If we've exhausted all attempts and still haven't found a valid value
+        // If we've exhausted our attempts, fall back to biased approach
         if (attempts >= max_attempts) {
-            return error.OutOfEntropy;
+            // Reset to the original position
+            self.prng.fixed_buffer.pos = original_pos;
+
+            // Use biased approach with the original value
+            return original_value % less_than;
         }
 
         return @intCast(mult >> bits);
