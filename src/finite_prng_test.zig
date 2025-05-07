@@ -353,7 +353,7 @@ test "enumWeighted" {
     // Use a fixed set of bytes for deterministic testing
 
     var bytes_: [4096]u8 = undefined;
-    @import("test_helpers.zig").load_bytes(&bytes_);
+    @import("test_helpers").load_bytes(&bytes_);
     var prng = FinitePrng.init(&bytes_);
     var rand = prng.random();
 
@@ -371,7 +371,7 @@ test "enumWeighted" {
 
 test "chance" {
     var bytes: [4096]u8 = undefined;
-    @import("test_helpers.zig").load_bytes(&bytes);
+    @import("test_helpers").load_bytes(&bytes);
     var prng = FinitePrng.init(&bytes);
     var rand = prng.random();
 
@@ -466,7 +466,7 @@ fn runComparisonTest(
 ) !void {
     // Create byte streams for testing
     var original_bytes: [4096]u8 = undefined;
-    @import("test_helpers.zig").load_bytes(&original_bytes);
+    @import("test_helpers").load_bytes(&original_bytes);
 
     var mutated_bytes: [4096]u8 = undefined;
     @memcpy(&mutated_bytes, &original_bytes);

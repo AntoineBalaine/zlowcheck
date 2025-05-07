@@ -26,7 +26,7 @@ pub const PropertyResult = struct {
     timestamp: i64,
 
     /// The byte sequence that produced the failure
-    failure_bytes: ?[]const u8,
+    failure_bytes: ?[]u8,
 
     /// Format the failure bytes as a hex string for easy copy/paste into test cases
     /// Returns a string that needs to be freed by the caller
@@ -201,7 +201,7 @@ pub fn Property(comptime T: type, comptime GeneratorType: type) type {
         /// - PropertyResult if the test fails
         /// - error.OutOfMemory if memory allocation fails
         /// - error.OutOfEntropy if the input byte slice doesn't contain enough randomness
-        pub fn check(self: Self, allocator: std.mem.Allocator, bytes: []const u8) error{ OutOfMemory, OutOfEntropy }!?PropertyResult {
+        pub fn check(self: Self, allocator: std.mem.Allocator, bytes: []u8) error{ OutOfMemory, OutOfEntropy }!?PropertyResult {
             // Create a finite PRNG from the byte slice
             var prng = FinitePrng.init(bytes);
             var random = prng.random();

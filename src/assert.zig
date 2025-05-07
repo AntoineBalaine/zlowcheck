@@ -10,7 +10,7 @@ const PropertyFailure = property_mod.PropertyFailure;
 pub const AssertConfig = struct {
     /// Number of bytes to use for testing (more bytes = more test cases)
     /// If null, random bytes will be generated
-    bytes: ?[]const u8 = null,
+    bytes: ?[]u8 = null,
 
     /// Number of runs to attempt (only used if bytes is null)
     runs: u32 = 100,
