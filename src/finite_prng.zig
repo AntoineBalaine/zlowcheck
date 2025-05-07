@@ -190,126 +190,49 @@ pub const FiniteRandom = struct {
         return @rem(rnd, less_than);
     }
 
-    /// falls back to biased if it can’t find a value
+    /// Find a value in range by doing rejection sampling.
+    /// Since entropy is a finite resource here, this version of the API
+    /// mutates the bytestream until it finds a valid value,
+    /// instead of endlessly consuming entropy.
     pub fn uintLessThanMut(self: *@This(), comptime T: type, less_than: T) !T {
         comptime assert(@typeInfo(T).int.signedness == .unsigned);
         assert(0 < less_than);
         if (less_than <= 1) return 0;
 
         // Calculate threshold using wrapping negation
-        const thresh = (0 -% less_than) % less_than;
+        const bias_thresh = (0 -% less_than) % less_than;
 
-        // Calculate bits for return value
         const bits = @typeInfo(T).int.bits;
-
-        // Save the original position
-        const original_pos = self.prng.fixed_buffer.pos;
-
-        // Store the original bytes that we'll read
-        const bytes_needed = std.math.divCeil(usize, bits, 8) catch unreachable;
-        var original_value: T = undefined;
-
-        // Read the bytes but don't advance the position yet
-        {
-            const temp_pos = self.prng.fixed_buffer.pos;
-            original_value = try self.int(T);
-            self.prng.fixed_buffer.pos = temp_pos; // Reset position
-        }
+        const bytes_needed = comptime std.math.divCeil(usize, bits, 8) catch unreachable;
 
         var x: T = undefined;
         var mult: @TypeOf(math.mulWide(T, 0, 0)) = undefined;
-        // Try unbiased approach with mutations
-        var attempts: u16 = 0;
-        const max_attempts = 2000;
 
-        while (attempts < max_attempts) : (attempts += 1) {
-            // Save current position
-            const read_pos = self.prng.fixed_buffer.pos;
+        const pos = self.prng.fixed_buffer.pos;
 
-            // Try to generate a value
+        { // Try to generate a value
             x = try self.int(T);
             mult = math.mulWide(T, x, less_than);
 
-            if (@as(T, @truncate(mult)) >= thresh) break;
-
-            // Reset position
-            self.prng.fixed_buffer.pos = read_pos;
-
-            // Skip mutation if at the beginning of the buffer
-            if (read_pos == 0) continue;
-
-            // Apply different mutation strategies based on attempt number
-            switch (attempts % 8) {
-                0 => {
-                    // First attempt: decrement the last byte read
-                    if (read_pos > 0) {
-                        const byte_ref = &self.prng.bytes_[read_pos - 1];
-                        byte_ref.* = byte_ref.* -% 1;
-                    }
-                },
-                1 => {
-                    // Second attempt: increment the last byte read
-                    if (read_pos > 0) {
-                        const byte_ref = &self.prng.bytes_[read_pos - 1];
-                        byte_ref.* = byte_ref.* +% 1;
-                    }
-                },
-                2 => {
-                    // Third attempt: flip bits in the last byte read
-                    if (read_pos > 0) {
-                        const byte_ref = &self.prng.bytes_[read_pos - 1];
-                        byte_ref.* ^= 0x55; // 01010101 pattern
-                    }
-                },
-                3 => {
-                    // Fourth attempt: modify all bytes that were read
-                    var i: usize = 0;
-                    while (i < bytes_needed and read_pos > i) : (i += 1) {
-                        const byte_ref = &self.prng.bytes_[read_pos - i - 1];
-                        byte_ref.* = byte_ref.* -% 1;
-                    }
-                },
-                4 => {
-                    // Fifth attempt: invert the last byte read
-                    if (read_pos > 0) {
-                        const byte_ref = &self.prng.bytes_[read_pos - 1];
-                        byte_ref.* = ~byte_ref.*;
-                    }
-                },
-                5 => {
-                    // Sixth attempt: add a larger increment to the last byte
-                    if (read_pos > 0) {
-                        const byte_ref = &self.prng.bytes_[read_pos - 1];
-                        byte_ref.* +%= 10;
-                    }
-                },
-                6 => {
-                    // Seventh attempt: subtract a larger decrement from the last byte
-                    if (read_pos > 0) {
-                        const byte_ref = &self.prng.bytes_[read_pos - 1];
-                        byte_ref.* -%= 10;
-                    }
-                },
-                else => {
-                    // Eighth attempt: flip every bit in the last byte
-                    if (read_pos > 0) {
-                        const byte_ref = &self.prng.bytes_[read_pos - 1];
-                        byte_ref.* ^= 0xFF;
-                    }
-                },
+            if (@as(T, @truncate(mult)) >= bias_thresh) {
+                return @intCast(mult >> bits);
             }
         }
 
-        // If we've exhausted our attempts, fall back to biased approach
-        if (attempts >= max_attempts) {
-            // Reset to the original position
-            self.prng.fixed_buffer.pos = original_pos;
+        var prng = std.Random.DefaultPrng.init(try self.int(u64));
+        var rand = prng.random();
+        var buf: [bytes_needed]u8 = undefined;
 
-            // Use biased approach with the original value
-            return original_value % less_than;
+        while (true) {
+            self.prng.fixed_buffer.pos = pos;
+            rand.bytes(&buf);
+            @memcpy(self.prng.fixed_buffer.buffer[pos .. pos + bytes_needed], buf[0..]);
+            x = try self.int(T);
+            mult = math.mulWide(T, x, less_than);
+            if (@as(T, @truncate(mult)) >= bias_thresh) {
+                return @intCast(mult >> bits);
+            }
         }
-
-        return @intCast(mult >> bits);
     }
 
     pub fn uintLessThan(self: *@This(), comptime T: type, less_than: T) !T {

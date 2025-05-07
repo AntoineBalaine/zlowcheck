@@ -382,7 +382,6 @@ test "chance" {
     }
     try std.testing.expect(balance != 0);
 }
-
 test "Compare uintLessThan and uintLessThanMut entropy usage" {
     // Test with different integer types and bounds
     const TestCase = struct {
