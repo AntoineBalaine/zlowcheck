@@ -25,7 +25,10 @@ pub const FinitePrngErr = error{
     OutOfEntropy,
 };
 
+/// doesn’t accept byte sequences longer than 2³² bytes-long.
 pub fn init(bytes_: []u8) FinitePrng {
+    // Assert that the byte buffer isn't too large for our position tracking
+    std.debug.assert(bytes_.len <= std.math.maxInt(u32));
     return .{
         .bytes_ = bytes_,
         .fixed_buffer = std.io.fixedBufferStream(bytes_),

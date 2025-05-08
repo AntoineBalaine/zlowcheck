@@ -30,35 +30,64 @@ pub const StatefulConfig = struct {
 pub fn Command(comptime ModelType: type, comptime SystemType: type) type {
     return struct {
         const Self = @This();
+
+        /// Function that checks if the command can be applied to the current model state
+        checkPreconditionFn: *const fn (ctx: *const anyopaque, model: *ModelType) bool,
+
+        /// Function that applies the command to the model
+        onModelOnlyFn: *const fn (ctx: *const anyopaque, model: *ModelType) void,
+
+        /// Function that runs the command on the system under test
+        onPairFn: *const fn (ctx: *const anyopaque, model: *ModelType, sut: *SystemType) anyerror!bool,
+
+        /// Context pointer for the command implementation
+        ctx: *const anyopaque,
+
         /// Check if this command can be applied to the current model state
-        pub fn checkPrecondition(self: *Self, model: *ModelType) bool {
-            _ = self;
-            _ = model;
-            return true; // Default implementation always allows command
+        pub fn checkPrecondition(self: *const Self, model: *ModelType) bool {
+            return self.checkPreconditionFn(self.ctx, model);
         }
 
         /// Apply this command to the model (update model state)
-        pub fn apply(self: *Self, model: *ModelType) void {
-            _ = self;
-            _ = model;
-            // Default implementation does nothing
+        pub fn onModelOnly(self: *const Self, model: *ModelType) void {
+            self.onModelOnlyFn(self.ctx, model);
         }
 
         /// Run this command on the actual system under test and verify the results
-        /// Returns fals if the command fails or if the system state doesn't match expectations
-        pub fn run(self: *Self, model: *ModelType, sut: *SystemType) !bool {
-            _ = self;
-            _ = model;
-            _ = sut;
-            return true;
+        /// Returns false if the command fails or if the system state doesn't match expectations
+        pub fn onPair(self: *const Self, model: *ModelType, sut: *SystemType) !bool {
+            return self.onPairFn(self.ctx, model, sut);
         }
 
         /// Format the command for debugging
-        pub fn format(self: *Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-            _ = self;
-            _ = fmt;
-            _ = options;
-            try writer.writeAll("Command");
+        /// Create a command from any type that implements the required methods
+        pub fn init(cmd: anytype) Self {
+            const T = @TypeOf(cmd);
+            _ = &T;
+            return .{
+                .checkPreconditionFn = struct {
+                    fn checkPrecondition(ctx: *const anyopaque, model: *ModelType) bool {
+                        const self: *T = @constCast(@ptrCast(@alignCast(ctx)));
+                        return @constCast(self.*).checkPrecondition(model);
+                    }
+                }.checkPrecondition,
+
+                .onModelOnlyFn = struct {
+                    fn onModelOnly(ctx: *const anyopaque, model: *ModelType) void {
+                        const self: *T = @constCast(@ptrCast(@alignCast(ctx)));
+                        @constCast(self.*).onModelOnly(model);
+                    }
+                }.onModelOnly,
+
+                .onPairFn = struct {
+                    fn onPair(ctx: *const anyopaque, model: *ModelType, sut: *SystemType) !bool {
+                        const self: *T = @constCast(@ptrCast(@alignCast(ctx)));
+                        return @constCast(self.*).onPair(model, sut);
+                    }
+                }.onPair,
+
+                .ctx = cmd,
+            };
         }
     };
 }
@@ -93,7 +122,7 @@ pub const StatefulFailure = struct {
 pub fn assertStatefulUnmanaged(
     comptime ModelType: type,
     comptime SystemType: type,
-    command_sequence: CommandSequence(ModelType, SystemType), // we could convert this to an anytype for more flexibility
+    command_sequence: anytype, // we could convert this to an anytype for more flexibility
     model: *ModelType,
     sut: *SystemType,
     config: StatefulConfig,
@@ -103,18 +132,15 @@ pub fn assertStatefulUnmanaged(
     var iterator = command_sequence.iterator(null);
 
     // Run through the commands
-    while (try iterator.next()) |cmd| {
+    while (try iterator.next()) |*cmd| {
         // Check precondition
         if (!cmd.checkPrecondition(model)) {
             // Skip commands that don't meet preconditions
             continue;
         }
 
-        // Apply to model
-        cmd.apply(model);
-
         // Run on the system under test
-        if (cmd.run(model, sut)) continue;
+        if (try cmd.onPair(model, sut)) continue;
 
         // Create a failure result
         var result: StatefulFailure = .init(iterator.index);
@@ -132,7 +158,7 @@ pub fn assertStatefulUnmanaged(
         result.failing_position = shrunk_position;
 
         if (config.verbose) {
-            formatStatefulFailure(ModelType, SystemType, command_sequence, model, result);
+            try formatStatefulFailure(ModelType, SystemType, command_sequence, model, result);
         }
         return result;
     }
@@ -145,7 +171,7 @@ pub fn assertStatefulUnmanaged(
 pub fn shrinkCommandSequence(
     comptime ModelType: type,
     comptime SystemType: type,
-    command_sequence: CommandSequence(ModelType, SystemType),
+    command_sequence: *CommandSequence(ModelType, SystemType),
     model: *ModelType,
     sut: *SystemType,
     config: StatefulConfig,
@@ -205,7 +231,7 @@ pub fn shrinkCommandSequence(
 fn testChunk(
     comptime ModelType: type,
     comptime SystemType: type,
-    command_sequence: CommandSequence(ModelType, SystemType),
+    command_sequence: *CommandSequence(ModelType, SystemType),
     chunk: CommandPosition,
     model: *ModelType,
     sut: *SystemType,
@@ -226,11 +252,8 @@ fn testChunk(
             continue;
         }
 
-        // Apply to model
-        cmd.apply(model);
-
         // Run on the system under test
-        if (!try cmd.run(model, sut)) {
+        if (!try cmd.onPair(model, sut)) {
             // Found a failure - this chunk reproduces the issue
             return true;
         }
@@ -272,11 +295,12 @@ pub fn CommandSequence(comptime M: type, comptime S: type) type {
             max_runs: usize,
             allocator: std.mem.Allocator,
         ) !Self {
+            std.debug.assert(max_runs <= std.math.maxInt(u32));
             return .{
                 .random = random,
-                .max_runs = max_runs,
+                .max_runs = @intCast(max_runs),
                 .commands = commands,
-                .sequence = try std.ArrayListUnmanaged(Command(M, S)).initCapacity(allocator, max_runs),
+                .sequence = try std.ArrayListUnmanaged(Entry).initCapacity(allocator, max_runs),
             };
         }
 
@@ -301,14 +325,14 @@ pub fn CommandSequence(comptime M: type, comptime S: type) type {
             pub fn next(self: *Iterator) !?Command(M, S) {
                 if (self.index >= self.parent.max_runs) return null;
 
-                const cmd_idx = try self.parent.random.intRangeLessThan(u32, 0, self.parent.commands.len);
+                const cmd_idx = try self.parent.random.intRangeLessThan(u32, 0, @intCast(self.parent.commands.len));
                 const byte_pos = self.parent.random.prng.fixed_buffer.pos;
 
                 // Store it in our history
-                self.parent.sequence.appendAssumeCapacity(.{ .byte_pos = byte_pos, .cmd_idx = Idx.fromIndex(cmd_idx) });
+                self.parent.sequence.appendAssumeCapacity(.{ .byte_pos = @intCast(byte_pos), .cmd_idx = Idx.fromIndex(cmd_idx) });
 
                 self.index += 1;
-                return self.parent.commands[@intCast(cmd_idx.toIndex())];
+                return self.parent.commands[@intCast(cmd_idx)];
             }
 
             pub fn reset(self: *Iterator) void {
@@ -337,10 +361,10 @@ pub fn CommandSequence(comptime M: type, comptime S: type) type {
 pub fn formatStatefulFailure(
     comptime ModelType: type,
     comptime SystemType: type,
-    command_sequence: CommandSequence(ModelType, SystemType),
+    command_sequence: *CommandSequence(ModelType, SystemType),
     model: *ModelType,
     failure: StatefulFailure,
-) void {
+) !void {
     // Basic failure information is always printed
     std.debug.print("\n=== Stateful Test Failed ===\n{}\n", .{failure});
 
@@ -355,12 +379,12 @@ pub fn formatStatefulFailure(
     var iterator = command_sequence.iterator(failure_pos);
     var i: usize = failure_pos.start;
 
-    while (iterator.next()) |cmd| {
+    while (try iterator.next()) |cmd| {
         if (!cmd.checkPrecondition(model)) {
             std.debug.print("  {}: [SKIPPED] ", .{i});
         } else {
             std.debug.print("  {}: ", .{i});
-            cmd.apply(model);
+            cmd.onModelOnly(model);
         }
 
         // Print the command (using its format method)
@@ -441,12 +465,12 @@ test assertStatefulUnmanaged {
             return true;
         }
 
-        pub fn apply(self: *@This(), model: *Model) void {
+        pub fn onModelOnly(self: *@This(), model: *Model) void {
             _ = self;
             model.value += 1;
         }
 
-        pub fn run(self: *@This(), model: *Model, sut: *System) !bool {
+        pub fn onPair(self: *@This(), model: *Model, sut: *System) !bool {
             _ = self;
             sut.increment();
             return model.value == sut.value;
@@ -466,12 +490,12 @@ test assertStatefulUnmanaged {
             return model.value > 0;
         }
 
-        pub fn apply(self: *@This(), model: *Model) void {
+        pub fn onModelOnly(self: *@This(), model: *Model) void {
             _ = self;
             model.value -= 1;
         }
 
-        pub fn run(self: *@This(), model: *Model, sut: *System) !bool {
+        pub fn onPair(self: *@This(), model: *Model, sut: *System) !bool {
             _ = self;
             sut.decrement();
             return model.value == sut.value;
@@ -486,9 +510,9 @@ test assertStatefulUnmanaged {
     };
 
     // Create commands array
-    const commands = [_]Command(Model, System){
-        IncrementCommand{},
-        DecrementCommand{},
+    const commands = comptime [_]Command(Model, System){
+        Command(Model, System).init(&IncrementCommand{}),
+        Command(Model, System).init(&DecrementCommand{}),
     };
 
     // Create test configuration
@@ -513,5 +537,5 @@ test assertStatefulUnmanaged {
     defer cmd_seq.deinit(std.testing.allocator);
 
     // Run the test
-    try assertStatefulUnmanaged(Model, System, cmd_seq, &model, &sut, config);
+    _ = try assertStatefulUnmanaged(Model, System, &cmd_seq, &model, &sut, config);
 }
