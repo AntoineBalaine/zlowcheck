@@ -28,7 +28,7 @@ const assert_mod = @import("assert.zig");
 pub const assert = assert_mod.assert;
 pub const AssertConfig = assert_mod.AssertConfig;
 
-// const state_mod = @import("state2.zig");
+// const state_mod = @import("state.zig");
 // pub const assertStatefulUnmanaged = state_mod.assertStatefulUnmanaged;
 // pub const CommandSequence = state_mod.CommandSequence;
 // pub const Command = state_mod.Command;
@@ -41,5 +41,5 @@ test {
     _ = @import("generator_test.zig");
     _ = @import("property_test.zig");
     _ = @import("assert.zig");
-    _ = @import("state2.zig");
+    _ = @import("state.zig");
 }
