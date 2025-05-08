@@ -63,26 +63,25 @@ pub fn Command(comptime ModelType: type, comptime SystemType: type) type {
         /// Create a command from any type that implements the required methods
         pub fn init(cmd: anytype) Self {
             const T = @TypeOf(cmd);
-            _ = &T;
             return .{
                 .checkPreconditionFn = struct {
                     fn checkPrecondition(ctx: *const anyopaque, model: *ModelType) bool {
-                        const self: *T = @constCast(@ptrCast(@alignCast(ctx)));
-                        return @constCast(self.*).checkPrecondition(model);
+                        const self = @as(T, @ptrCast(@constCast(@alignCast(ctx))));
+                        return self.checkPrecondition(model);
                     }
                 }.checkPrecondition,
 
                 .onModelOnlyFn = struct {
                     fn onModelOnly(ctx: *const anyopaque, model: *ModelType) void {
-                        const self: *T = @constCast(@ptrCast(@alignCast(ctx)));
-                        @constCast(self.*).onModelOnly(model);
+                        const self = @as(T, @ptrCast(@constCast(@alignCast(ctx))));
+                        self.onModelOnly(model);
                     }
                 }.onModelOnly,
 
                 .onPairFn = struct {
                     fn onPair(ctx: *const anyopaque, model: *ModelType, sut: *SystemType) !bool {
-                        const self: *T = @constCast(@ptrCast(@alignCast(ctx)));
-                        return @constCast(self.*).onPair(model, sut);
+                        const self = @as(T, @ptrCast(@constCast(@alignCast(ctx))));
+                        return self.onPair(model, sut);
                     }
                 }.onPair,
 
@@ -335,6 +334,15 @@ pub fn CommandSequence(comptime M: type, comptime S: type) type {
                 return self.parent.commands[@intCast(cmd_idx)];
             }
 
+            pub fn nextReplay(self: *Iterator) !?Command(M, S) {
+                if (self.index >= self.parent.max_runs) return null;
+
+                const cmd_idx = try self.parent.random.intRangeLessThan(u32, 0, @intCast(self.parent.commands.len));
+
+                self.index += 1;
+                return self.parent.commands[@intCast(cmd_idx)];
+            }
+
             pub fn reset(self: *Iterator) void {
                 // Reset to the start position
                 self.index = self.start;
@@ -348,7 +356,7 @@ pub fn CommandSequence(comptime M: type, comptime S: type) type {
             std.debug.assert(position.end <= self.sequence.items.len);
 
             // Get the last command entry
-            const last_cmd_idx = position.end;
+            const last_cmd_idx = position.end - 1;
             const last_entry = self.sequence.items[last_cmd_idx];
             const bytes_pos = last_entry.byte_pos;
 
@@ -379,7 +387,7 @@ pub fn formatStatefulFailure(
     var iterator = command_sequence.iterator(failure_pos);
     var i: usize = failure_pos.start;
 
-    while (try iterator.next()) |cmd| {
+    while (try iterator.nextReplay()) |cmd| {
         if (!cmd.checkPrecondition(model)) {
             std.debug.print("  {}: [SKIPPED] ", .{i});
         } else {
@@ -509,17 +517,19 @@ test assertStatefulUnmanaged {
         }
     };
 
+    var inc_cmd = IncrementCommand{};
+    var dec_cmd = DecrementCommand{};
     // Create commands array
-    const commands = comptime [_]Command(Model, System){
-        Command(Model, System).init(&IncrementCommand{}),
-        Command(Model, System).init(&DecrementCommand{}),
+    const commands = [_]Command(Model, System){
+        Command(Model, System).init(&inc_cmd),
+        Command(Model, System).init(&dec_cmd),
     };
 
     // Create test configuration
     const config = StatefulConfig{
         .runs = 100,
         .max_commands_per_run = 50,
-        .verbose = true,
+        .verbose = false,
     };
 
     // Initialize model and system
