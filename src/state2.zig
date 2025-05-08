@@ -1,7 +1,6 @@
 const std = @import("std");
 const FinitePrng = @import("finite_prng.zig");
 const generator_mod = @import("generator.zig");
-const BytePosition = generator_mod.BytePosition;
 const Generator = generator_mod.Generator;
 const finite_prng = @import("finite_prng");
 
@@ -32,7 +31,6 @@ pub const StatefulConfig = struct {
 pub fn Command(comptime ModelType: type, comptime SystemType: type) type {
     return struct {
         const Self = @This();
-        position: BytePosition,
         /// Check if this command can be applied to the current model state
         pub fn checkPrecondition(self: *Self, model: *ModelType) bool {
             _ = self;
@@ -80,12 +78,13 @@ pub const StatefulFailure = struct {
     num_shrinks: usize,
 
     /// The byte sequence that produced the failure (if available)
-    failure_bytes: ?BytePosition,
-    pub fn init(num_passed: usize) @This() {
+    failing_position: CommandPosition,
+
+    pub fn init(failure_idx: usize) @This() {
         return @This(){
-            .num_passed = num_passed,
+            .num_passed = failure_idx - 1,
             .num_shrinks = 0,
-            .failure_bytes = null,
+            .failing_position = .{ .start = 0, .end = @intCast(failure_idx) },
         };
     }
 };
@@ -133,6 +132,9 @@ pub fn assertStatefulUnmanaged(
 
         result.failing_position = shrunk_position;
 
+        if (config.verbose) {
+            formatStatefulFailure(ModelType, SystemType, command_sequence, model, result);
+        }
         return result;
     }
 
@@ -315,5 +317,90 @@ pub fn CommandSequence(comptime M: type, comptime S: type) type {
                 self.index = self.start;
             }
         };
+
+        pub fn getFailureBytes(self: *const Self, position: CommandPosition) []const u8 {
+            // Assert that we have a valid position
+            std.debug.assert(position.start < position.end);
+            std.debug.assert(position.end > 0);
+            std.debug.assert(position.end <= self.sequence.items.len);
+
+            // Get the last command entry
+            const last_cmd_idx = position.end;
+            const last_entry = self.sequence.items[last_cmd_idx];
+            const bytes_pos = last_entry.byte_pos;
+
+            // Return the bytes up to this position
+            return self.random.prng.fixed_buffer.buffer[0..bytes_pos];
+        }
     };
+}
+
+pub fn formatStatefulFailure(
+    comptime ModelType: type,
+    comptime SystemType: type,
+    command_sequence: CommandSequence(ModelType, SystemType),
+    model: *ModelType,
+    failure: StatefulFailure,
+) void {
+    // Basic failure information is always printed
+    std.debug.print("\n=== Stateful Test Failed ===\n{}\n", .{failure});
+
+    // If verbose mode is enabled, print detailed information
+    const failure_pos = failure.failing_position;
+    std.debug.print("\nFailing commands:\n", .{});
+
+    // Reset model to initial state
+    model.reset();
+
+    // Create an iterator for the failing sequence
+    var iterator = command_sequence.iterator(failure_pos);
+    var i: usize = failure_pos.start;
+
+    while (iterator.next()) |cmd| {
+        if (!cmd.checkPrecondition(model)) {
+            std.debug.print("  {}: [SKIPPED] ", .{i});
+        } else {
+            std.debug.print("  {}: ", .{i});
+            cmd.apply(model);
+        }
+
+        // Print the command (using its format method)
+        std.debug.print("{}\n", .{cmd});
+        i += 1;
+    }
+
+    const bytes = command_sequence.getFailureBytes(failure.failing_position);
+
+    std.debug.print("\nFailure produced by {} bytes:\n", .{bytes.len});
+
+    // Print in rows of 16 bytes
+    var byte_idx: usize = 0;
+    while (byte_idx < bytes.len) {
+        std.debug.print("{X:0>4}: ", .{byte_idx});
+
+        var j: usize = 0;
+        while (j < 16 and byte_idx + j < bytes.len) : (j += 1) {
+            std.debug.print("{X:0>2} ", .{bytes[byte_idx + j]});
+        }
+
+        // Pad if needed
+        while (j < 16) : (j += 1) {
+            std.debug.print("   ", .{});
+        }
+
+        std.debug.print(" | ", .{});
+
+        j = 0;
+        while (j < 16 and byte_idx + j < bytes.len) : (j += 1) {
+            const c = bytes[byte_idx + j];
+            if (std.ascii.isPrint(c)) {
+                std.debug.print("{c}", .{c});
+            } else {
+                std.debug.print(".", .{});
+            }
+        }
+
+        std.debug.print("\n", .{});
+        byte_idx += 16;
+    }
 }
