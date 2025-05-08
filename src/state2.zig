@@ -334,6 +334,8 @@ pub fn CommandSequence(comptime M: type, comptime S: type) type {
                 return self.parent.commands[@intCast(cmd_idx)];
             }
 
+            /// doesn’t record the commands into the sequence list,
+            /// doesn’t generate new command selection - only replays through the list of decisions
             pub fn nextReplay(self: *Iterator) !?Command(M, S) {
                 if (self.index >= self.parent.max_runs) return null;
 
@@ -357,11 +359,11 @@ pub fn CommandSequence(comptime M: type, comptime S: type) type {
 
             // Get the last command entry
             const last_cmd_idx = position.end - 1;
+            const first_entry = self.sequence.items[position.start];
             const last_entry = self.sequence.items[last_cmd_idx];
-            const bytes_pos = last_entry.byte_pos;
 
             // Return the bytes up to this position
-            return self.random.prng.fixed_buffer.buffer[0..bytes_pos];
+            return self.random.prng.fixed_buffer.buffer[first_entry.byte_pos..last_entry.byte_pos];
         }
     };
 }
@@ -385,19 +387,17 @@ pub fn formatStatefulFailure(
 
     // Create an iterator for the failing sequence
     var iterator = command_sequence.iterator(failure_pos);
-    var i: usize = failure_pos.start;
 
     while (try iterator.nextReplay()) |cmd| {
         if (!cmd.checkPrecondition(model)) {
-            std.debug.print("  {}: [SKIPPED] ", .{i});
+            std.debug.print("  {}: [SKIPPED] ", .{iterator.index});
         } else {
-            std.debug.print("  {}: ", .{i});
+            std.debug.print("  {}: ", .{iterator.index});
             cmd.onModelOnly(model);
         }
 
         // Print the command (using its format method)
         std.debug.print("{}\n", .{cmd});
-        i += 1;
     }
 
     const bytes = command_sequence.getFailureBytes(failure.failing_position);
@@ -529,7 +529,7 @@ test assertStatefulUnmanaged {
     const config = StatefulConfig{
         .runs = 100,
         .max_commands_per_run = 50,
-        .verbose = false,
+        .verbose = true,
     };
 
     // Initialize model and system
