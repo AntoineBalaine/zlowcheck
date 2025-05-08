@@ -40,6 +40,7 @@ pub fn Command(comptime ModelType: type, comptime SystemType: type) type {
         /// Function that runs the command on the system under test
         onPairFn: *const fn (ctx: *const anyopaque, model: *ModelType, sut: *SystemType) anyerror!bool,
 
+        name: []const u8,
         /// Context pointer for the command implementation
         ctx: *const anyopaque,
 
@@ -59,10 +60,24 @@ pub fn Command(comptime ModelType: type, comptime SystemType: type) type {
             return self.onPairFn(self.ctx, model, sut);
         }
 
+        pub fn format(self: *const Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) anyerror!void {
+            _ = fmt;
+            _ = options;
+            try writer.writeAll(self.name);
+        }
+
         /// Format the command for debugging
         /// Create a command from any type that implements the required methods
         pub fn init(cmd: anytype) Self {
             const T = @TypeOf(cmd);
+            const ChildType = @TypeOf(cmd.*);
+
+            // Get name from the command type if available
+            const name = if (@hasDecl(ChildType, "name"))
+                ChildType.name
+            else
+                @typeName(ChildType);
+
             return .{
                 .checkPreconditionFn = struct {
                     fn checkPrecondition(ctx: *const anyopaque, model: *ModelType) bool {
@@ -86,6 +101,7 @@ pub fn Command(comptime ModelType: type, comptime SystemType: type) type {
                 }.onPair,
 
                 .ctx = cmd,
+                .name = name,
             };
         }
     };
@@ -467,6 +483,7 @@ test assertStatefulUnmanaged {
 
     // Define commands
     const IncrementCommand = struct {
+        pub const name = "increment";
         pub fn checkPrecondition(self: *@This(), model: *Model) bool {
             _ = self;
             _ = model;
@@ -493,6 +510,7 @@ test assertStatefulUnmanaged {
     };
 
     const DecrementCommand = struct {
+        pub const name = "decrement";
         pub fn checkPrecondition(self: *@This(), model: *Model) bool {
             _ = self;
             return model.value > 0;
