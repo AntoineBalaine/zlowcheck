@@ -1,5 +1,10 @@
 const std = @import("std");
-/// Position within a command sequence
+const FinitePrng = @import("finite_prng.zig");
+const generator_mod = @import("generator.zig");
+const BytePosition = generator_mod.BytePosition;
+const Generator = generator_mod.Generator;
+const finite_prng = @import("finite_prng");
+
 pub const CommandPosition = struct {
     /// Start index (inclusive)
     start: usize,
@@ -8,44 +13,56 @@ pub const CommandPosition = struct {
     end: usize,
 };
 
-/// Interface for anything that can produce a sequence of commands
-pub fn CommandSequence(comptime CommandType: type) type {
+/// Configuration for stateful testing
+pub const StatefulConfig = struct {
+    /// Number of bytes to use for testing (more bytes = more test cases)
+    /// If null, random bytes will be generated
+    bytes: ?[]const u8 = null,
+
+    /// Number of runs to attempt (only used if bytes is null)
+    runs: u32 = 100,
+
+    /// Maximum number of commands per test sequence
+    max_commands_per_run: u32 = 100,
+
+    /// Whether to print verbose output
+    verbose: bool = false,
+};
+
+pub fn Command(comptime ModelType: type, comptime SystemType: type) type {
     return struct {
-        /// Get an iterator over the commands in this sequence
-        /// Optionally starting at a specific position
-        pub fn iterator(self: @This(), position: ?CommandPosition) Iterator {
-            _ = self; // autofix
-            _ = position;
-            @compileError("iterator() not implemented");
+        const Self = @This();
+        position: BytePosition,
+        /// Check if this command can be applied to the current model state
+        pub fn checkPrecondition(self: *Self, model: *ModelType) bool {
+            _ = self;
+            _ = model;
+            return true; // Default implementation always allows command
         }
 
-        /// Get a slice of commands from this sequence
-        pub fn getSlice(self: @This(), position: CommandPosition) []const CommandType {
-            _ = self; // autofix
-            _ = position;
-            @compileError("getSlice() not implemented");
+        /// Apply this command to the model (update model state)
+        pub fn apply(self: *Self, model: *ModelType) void {
+            _ = self;
+            _ = model;
+            // Default implementation does nothing
         }
 
-        /// Iterator type for this sequence
-        pub const Iterator = struct {
-            /// Get the next command in the sequence, or null if done
-            pub fn next(self: *Iterator) ?CommandType {
-                _ = self; // autofix
-                @compileError("next() not implemented");
-            }
+        /// Run this command on the actual system under test and verify the results
+        /// Returns fals if the command fails or if the system state doesn't match expectations
+        pub fn run(self: *Self, model: *ModelType, sut: *SystemType) !bool {
+            _ = self;
+            _ = model;
+            _ = sut;
+            return true;
+        }
 
-            /// Reset the iterator to the beginning
-            pub fn reset(self: *Iterator) void {
-                _ = self; // autofix
-                @compileError("reset() not implemented");
-            }
-
-            /// Get the current position in the sequence
-            pub fn getPosition(self: *Iterator) CommandPosition {
-                _ = self; // autofix
-                @compileError("getPosition() not implemented");
-            }
-        };
+        /// Format the command for debugging
+        pub fn format(self: *Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+            _ = self;
+            _ = fmt;
+            _ = options;
+            try writer.writeAll("Command");
+        }
     };
 }
 
@@ -56,9 +73,6 @@ pub fn CommandSequence(comptime CommandType: type) type {
 /// Do we need to keep the allocator in, though? we know which allocator we’re using, and these bytes aren’t owned by the Failure struct, they’re owned by the finite_prng. As a result, we can remove the denit function as well.
 /// num_passed and num_shrinks should be u16s instead of usize, which is architecture-dependent.
 pub const StatefulFailure = struct {
-    /// Position of the failing command sequence
-    failing_position: CommandPosition,
-
     /// Number of test cases that passed before failure
     num_passed: usize,
 
@@ -67,15 +81,12 @@ pub const StatefulFailure = struct {
 
     /// The byte sequence that produced the failure (if available)
     failure_bytes: ?BytePosition,
-
-    /// Allocator used for this result
-    allocator: std.mem.Allocator,
-
-    /// Free resources associated with this failure
-    pub fn deinit(self: *StatefulFailure) void {
-        if (self.failure_bytes) |bytes| {
-            self.allocator.free(bytes);
-        }
+    pub fn init(num_passed: usize) @This() {
+        return @This(){
+            .num_passed = num_passed,
+            .num_shrinks = 0,
+            .failure_bytes = null,
+        };
     }
 };
 
@@ -84,19 +95,14 @@ pub const StatefulFailure = struct {
 pub fn assertStatefulUnmanaged(
     comptime ModelType: type,
     comptime SystemType: type,
-    command_sequence: anytype,
+    command_sequence: CommandSequence(ModelType, SystemType), // we could convert this to an anytype for more flexibility
     model: *ModelType,
     sut: *SystemType,
     config: StatefulConfig,
-    allocator: std.mem.Allocator,
-    random: finite_prng.random,
 ) !?StatefulFailure {
+    std.debug.assert(config.max_commands_per_run <= std.math.maxInt(u32));
     // Get an iterator for the command sequence
     var iterator = command_sequence.iterator(null);
-
-    const start_byte = random.prng.fixed_buffer.pos;
-
-    var cmd_index: usize = 0;
 
     // Run through the commands
     while (try iterator.next()) |cmd| {
@@ -110,33 +116,24 @@ pub fn assertStatefulUnmanaged(
         cmd.apply(model);
 
         // Run on the system under test
-        if (cmd.run(model, sut)) |_| {
+        if (cmd.run(model, sut)) continue;
 
-            // Get the current position in the sequence
-            const position = iterator.getPosition();
+        // Create a failure result
+        var result: StatefulFailure = .init(iterator.index);
 
-            // Create a failure result
-            var result = StatefulFailure{
-                .failing_position = position,
-                .num_passed = cmd_index,
-                .num_shrinks = 0,
-                .failure_bytes = .{ .start = start_byte, .end = random.prng.fixed_buffer.pos },
-                .allocator = allocator,
-            };
+        // Try to shrink the command sequence
+        const shrunk_position = try shrinkCommandSequence(
+            ModelType,
+            SystemType,
+            command_sequence,
+            model,
+            sut,
+            config,
+        );
 
-            // Try to get the bytes that produced this failure if available
-            // This would be implementation-specific and handled by the command sequence
+        result.failing_position = shrunk_position;
 
-            // Try to shrink the command sequence
-            const shrunk_position = try shrinkCommandSequence(ModelType, SystemType, command_sequence, model, sut, position, config, allocator);
-
-            // Update the failure with the shrunk position
-            result.failing_position = shrunk_position;
-
-            return result;
-        }
-
-        cmd_index += 1;
+        return result;
     }
 
     // If we get here, all commands passed
@@ -147,162 +144,175 @@ pub fn assertStatefulUnmanaged(
 pub fn shrinkCommandSequence(
     comptime ModelType: type,
     comptime SystemType: type,
-    command_sequence: anytype,
+    command_sequence: CommandSequence(ModelType, SystemType),
     model: *ModelType,
     sut: *SystemType,
-    failing_position: CommandPosition,
     config: StatefulConfig,
-    allocator: std.mem.Allocator,
 ) !CommandPosition {
-    _ = config;
-    _ = allocator;
+    // Start with the full sequence that caused the failure
+    var best_position = CommandPosition{ .start = 0, .end = command_sequence.sequence.items.len };
 
-    // Get the failing slice
-    const failing_slice = command_sequence.getSlice(failing_position);
+    // Track the number of shrinking steps
+    var shrink_steps: usize = 0;
 
-    // Try various shrinking strategies:
-    // 1. Remove commands from the end
-    // 2. Remove commands from the middle
-    // 3. Simplify individual commands
+    // Binary search to find the smallest failing subsequence
+    while (best_position.end - best_position.start > 1) {
+        // Divide the current chunk in two
+        const mid = best_position.start + (best_position.end - best_position.start) / 2;
 
-    // For now, just return the original position
-    // Actual shrinking implementation would go here
-    return failing_position;
+        // Try the right half first (where the failure was last seen)
+        const right_chunk = CommandPosition{
+            .start = mid,
+            .end = best_position.end,
+        };
+
+        // Test if the right chunk still reproduces the failure
+        if (try testChunk(ModelType, SystemType, command_sequence, right_chunk, model, sut)) {
+            // Right chunk still fails - we can discard the left chunk
+            best_position.start = mid;
+            shrink_steps += 1;
+        } else {
+            // Right chunk doesn't fail - the failure must be in the left chunk
+            // or span across both chunks
+
+            // Try the left chunk
+            const left_chunk = CommandPosition{
+                .start = best_position.start,
+                .end = mid,
+            };
+
+            if (try testChunk(ModelType, SystemType, command_sequence, left_chunk, model, sut)) {
+                // Left chunk fails - we can discard the right chunk
+                best_position.end = mid;
+                shrink_steps += 1;
+            } else {
+                // Neither half fails on its own - we need both chunks
+                // We can't shrink further with this binary approach
+                break;
+            }
+        }
+    }
+
+    if (config.verbose) {
+        std.debug.print("Shrunk command sequence to commands {}..{} in {} steps\n", .{ best_position.start, best_position.end, shrink_steps });
+    }
+
+    return best_position;
 }
 
-pub fn AllocatingCommandSequence(comptime T: type) type {
+/// Test if a chunk of the command sequence reproduces the failure
+fn testChunk(
+    comptime ModelType: type,
+    comptime SystemType: type,
+    command_sequence: CommandSequence(ModelType, SystemType),
+    chunk: CommandPosition,
+    model: *ModelType,
+    sut: *SystemType,
+) !bool {
+    // Reset model and SUT to initial state
+    // (These would need to be implemented by the user)
+    model.reset();
+    sut.reset();
+
+    // Use the existing iterator to replay the chunk
+    var iterator = command_sequence.iterator(chunk);
+
+    // Run through the commands in this chunk
+    while (try iterator.next()) |cmd| {
+        // Check precondition
+        if (!cmd.checkPrecondition(model)) {
+            // Skip commands that don't meet preconditions
+            continue;
+        }
+
+        // Apply to model
+        cmd.apply(model);
+
+        // Run on the system under test
+        if (!try cmd.run(model, sut)) {
+            // Found a failure - this chunk reproduces the issue
+            return true;
+        }
+    }
+
+    // No failure found with this chunk
+    return false;
+}
+
+pub fn CommandSequence(comptime M: type, comptime S: type) type {
     return struct {
         const Self = @This();
 
-        generator: Generator(T),
         random: *FinitePrng.FiniteRandom,
-        max_length: usize,
-        allocator: std.mem.Allocator,
-        commands: std.ArrayList(T),
+        max_runs: u32,
+        commands: []const Command(M, S),
+        sequence: std.ArrayListUnmanaged(Entry),
 
-        pub fn init(generator: anytype, random: *FinitePrng.FiniteRandom, max_length: usize, allocator: std.mem.Allocator) Self {
-            var commands = std.ArrayList(T).init(allocator);
-            // Preallocate capacity to avoid reallocations
-            commands.ensureTotalCapacity(max_length) catch {};
+        const Idx = enum(u32) {
+            _,
+            // Helper to convert from u32 to enum
+            pub fn fromIndex(index: u32) Idx {
+                return @enumFromInt(index);
+            }
+            // Helper to convert back to u32 if needed
+            pub fn toIndex(self: Idx) u32 {
+                return @intFromEnum(self);
+            }
+        };
 
+        const Entry = struct {
+            byte_pos: u32,
+            cmd_idx: Idx,
+        };
+
+        pub fn init(
+            commands: []const Command(M, S),
+            random: *FinitePrng.FiniteRandom,
+            max_runs: usize,
+            allocator: std.mem.Allocator,
+        ) !Self {
             return .{
-                .generator = generator,
                 .random = random,
-                .max_length = max_length,
-                .allocator = allocator,
+                .max_runs = max_runs,
                 .commands = commands,
+                .sequence = try std.ArrayListUnmanaged(Command(M, S)).initCapacity(allocator, max_runs),
             };
         }
 
-        pub fn deinit(self: *Self) void {
-            // Clean up any resources in the commands if needed
-            for (self.commands.items) |*cmd| {
-                if (@hasDecl(@TypeOf(cmd.*), "deinit")) {
-                    cmd.deinit(self.allocator);
-                }
-            }
-            self.commands.deinit();
+        pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
+            self.sequence.deinit(allocator);
         }
 
         pub fn iterator(self: *Self, position: ?CommandPosition) Iterator {
+            if (position) |pos| {
+                self.random.prng.fixed_buffer.pos = self.sequence.items[pos.start].byte_pos;
+            }
             return Iterator{
                 .parent = self,
-                .start = if (position) |pos| pos.start else 0,
-                .end = if (position) |pos| pos.end else self.max_length,
                 .index = if (position) |pos| pos.start else 0,
             };
         }
 
-        pub fn getSlice(self: *Self, position: CommandPosition) []const T {
-            const end = @min(position.end, self.commands.items.len);
-            return self.commands.items[position.start..end];
-        }
-
         pub const Iterator = struct {
             parent: *Self,
-            start: usize,
-            end: usize,
             index: usize,
 
-            pub fn next(self: *Iterator) !?T {
-                // If we've reached the end position or maximum length
-                if (self.index >= self.end || (self.index >= self.parent.max_length)) return null;
+            pub fn next(self: *Iterator) !?Command(M, S) {
+                if (self.index >= self.parent.max_runs) return null;
 
-                // If we're replaying existing commands
-                if (self.index < self.parent.commands.items.len) {
-                    const cmd = self.parent.commands.items[self.index];
-                    self.index += 1;
-                    return cmd;
-                }
-
-                // Generate a new command
-                const value = try self.parent.generator.generate(self.parent.random, self.parent.allocator);
+                const cmd_idx = try self.parent.random.intRangeLessThan(u32, 0, self.parent.commands.len);
+                const byte_pos = self.parent.random.prng.fixed_buffer.pos;
 
                 // Store it in our history
-                try self.parent.commands.append(value.value);
-
-                // Clean up the generator context since we've copied the value
-                value.deinit(self.parent.allocator);
+                self.parent.sequence.appendAssumeCapacity(.{ .byte_pos = byte_pos, .cmd_idx = Idx.fromIndex(cmd_idx) });
 
                 self.index += 1;
-                return self.parent.commands.items[self.index - 1];
+                return self.parent.commands[@intCast(cmd_idx.toIndex())];
             }
 
             pub fn reset(self: *Iterator) void {
                 // Reset to the start position
                 self.index = self.start;
-            }
-
-            pub fn getPosition(self: *Iterator) CommandPosition {
-                return .{
-                    .start = self.start,
-                    .end = self.index,
-                };
-            }
-        };
-    };
-}
-
-pub fn FixedCommandSequence(comptime T: type) type {
-    return struct {
-        commands: []const T,
-
-        pub fn iterator(self: @This(), position: ?CommandPosition) Iterator {
-            return Iterator{
-                .commands = self.commands,
-                .start = if (position) |pos| pos.start else 0,
-                .end = if (position) |pos| pos.end else self.commands.len,
-                .index = if (position) |pos| pos.start else 0,
-            };
-        }
-
-        pub fn getSlice(self: @This(), position: CommandPosition) []const T {
-            const end = @min(position.end, self.commands.len);
-            return self.commands[position.start..end];
-        }
-
-        pub const Iterator = struct {
-            commands: []const T,
-            start: usize,
-            end: usize,
-            index: usize,
-
-            pub fn next(self: *Iterator) ?T {
-                if (self.index >= self.end) return null;
-                const cmd = self.commands[self.index];
-                self.index += 1;
-                return cmd;
-            }
-
-            pub fn reset(self: *Iterator) void {
-                self.index = self.start;
-            }
-
-            pub fn getPosition(self: *Iterator) CommandPosition {
-                return .{
-                    .start = self.start,
-                    .end = self.index,
-                };
             }
         };
     };
