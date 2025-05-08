@@ -1,8 +1,7 @@
 const std = @import("std");
-const FinitePrng = @import("finite_prng.zig");
+const FinitePrng = @import("finite_prng");
 const generator_mod = @import("generator.zig");
 const Generator = generator_mod.Generator;
-const finite_prng = @import("finite_prng");
 
 pub const CommandPosition = struct {
     /// Start index (inclusive)
@@ -403,4 +402,116 @@ pub fn formatStatefulFailure(
         std.debug.print("\n", .{});
         byte_idx += 16;
     }
+}
+
+test assertStatefulUnmanaged {
+    // Define a simple model
+    const Model = struct {
+        value: u32 = 0,
+
+        pub fn reset(self: *@This()) void {
+            self.value = 0;
+        }
+    };
+
+    // Define a simple system under test
+    const System = struct {
+        value: u32 = 0,
+
+        pub fn reset(self: *@This()) void {
+            self.value = 0;
+        }
+
+        pub fn increment(self: *@This()) void {
+            self.value += 1;
+        }
+
+        pub fn decrement(self: *@This()) void {
+            if (self.value > 0) {
+                self.value -= 1;
+            }
+        }
+    };
+
+    // Define commands
+    const IncrementCommand = struct {
+        pub fn checkPrecondition(self: *@This(), model: *Model) bool {
+            _ = self;
+            _ = model;
+            return true;
+        }
+
+        pub fn apply(self: *@This(), model: *Model) void {
+            _ = self;
+            model.value += 1;
+        }
+
+        pub fn run(self: *@This(), model: *Model, sut: *System) !bool {
+            _ = self;
+            sut.increment();
+            return model.value == sut.value;
+        }
+
+        pub fn format(self: *@This(), comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+            _ = self;
+            _ = fmt;
+            _ = options;
+            try writer.writeAll("Increment");
+        }
+    };
+
+    const DecrementCommand = struct {
+        pub fn checkPrecondition(self: *@This(), model: *Model) bool {
+            _ = self;
+            return model.value > 0;
+        }
+
+        pub fn apply(self: *@This(), model: *Model) void {
+            _ = self;
+            model.value -= 1;
+        }
+
+        pub fn run(self: *@This(), model: *Model, sut: *System) !bool {
+            _ = self;
+            sut.decrement();
+            return model.value == sut.value;
+        }
+
+        pub fn format(self: *@This(), comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+            _ = self;
+            _ = fmt;
+            _ = options;
+            try writer.writeAll("Decrement");
+        }
+    };
+
+    // Create commands array
+    const commands = [_]Command(Model, System){
+        IncrementCommand{},
+        DecrementCommand{},
+    };
+
+    // Create test configuration
+    const config = StatefulConfig{
+        .runs = 100,
+        .max_commands_per_run = 50,
+        .verbose = true,
+    };
+
+    // Initialize model and system
+    var model = Model{};
+    var sut = System{};
+
+    // Create random source
+    var random_bytes: [1024]u8 = undefined;
+    @import("test_helpers").load_bytes(&random_bytes);
+    var prng = FinitePrng.init(&random_bytes);
+    var random = prng.random();
+
+    // Create command sequence
+    var cmd_seq = try CommandSequence(Model, System).init(&commands, &random, config.max_commands_per_run, std.testing.allocator);
+    defer cmd_seq.deinit(std.testing.allocator);
+
+    // Run the test
+    try assertStatefulUnmanaged(Model, System, cmd_seq, &model, &sut, config);
 }
