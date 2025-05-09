@@ -113,6 +113,8 @@ pub const StatefulFailure = struct {
     /// The byte sequence that produced the failure (if available)
     failing_position: CommandPosition,
 
+    /// NOT meant to be used from the shrinking logic
+    /// this is only for a first run.
     pub fn init(failure_idx: usize) @This() {
         return @This(){
             .num_passed = failure_idx - 1,
@@ -250,7 +252,7 @@ fn testChunk(
     var iterator = command_sequence.iterator(chunk);
 
     // Run through the commands in this chunk
-    while (try iterator.next()) |cmd| {
+    while (try iterator.nextReplay()) |cmd| {
         // Check precondition
         if (!cmd.checkPrecondition(model)) {
             // Skip commands that don't meet preconditions
@@ -461,6 +463,7 @@ test assertStateful {
         }
 
         pub fn increment(self: *@This()) void {
+            if (self.value >= 5) return;
             self.value += 1;
         }
 
@@ -531,8 +534,15 @@ test assertStateful {
     var sut = System{};
 
     // Create random source
-    var random_bytes: [1024]u8 = undefined;
-    @import("test_helpers").load_bytes(&random_bytes);
+    // var random_bytes: [1024]u8 = undefined;
+    // @import("test_helpers").load_bytes(&random_bytes);
+    var random_bytes = [_]u8{
+        0x8B, 0xBE, 0x02, 0x2C, 0x87, 0x0A, 0xF6, 0x54, 0x4A, 0x59, 0x73, 0xA8, 0x12, 0xF7, 0x2B, 0x85,
+        //
+        0xAD, 0x95, 0x90, 0x8A, 0x21, 0xF1, 0xAC, 0x64, 0x42, 0x32, 0xA5, 0x0D, 0x10, 0x1F, 0xBA, 0xE7,
+        //
+        0x0F, 0xEE, 0xF9, 0x62, 0x62, 0x62, 0x62, 0x62, 0x62, 0x62, 0x62,
+    };
     var prng = FinitePrng.init(&random_bytes);
     var random = prng.random();
 
@@ -541,5 +551,6 @@ test assertStateful {
     defer cmd_seq.deinit(std.testing.allocator);
 
     // Run the test
-    _ = try assertStateful(Model, System, &cmd_seq, &model, &sut, config);
+    const rv = try assertStateful(Model, System, &cmd_seq, &model, &sut, config);
+    try std.testing.expectEqual(null, rv);
 }
