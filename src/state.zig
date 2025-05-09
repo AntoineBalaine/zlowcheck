@@ -97,18 +97,9 @@ pub fn Command(comptime ModelType: type, comptime SystemType: type) type {
     };
 }
 
-/// Result of a stateful test failure
-/// However, the StatefulFailure seems to contain too much information:
-/// we can’t retrieve the failure bytes, because we might not have generators, so that’s not really priority. I do want to be able to serialize them, but we should discuss this later. Let’s leave them in the function
-///
-/// Do we need to keep the allocator in, though? we know which allocator we’re using, and these bytes aren’t owned by the Failure struct, they’re owned by the finite_prng. As a result, we can remove the denit function as well.
-/// num_passed and num_shrinks should be u16s instead of usize, which is architecture-dependent.
 pub const StatefulFailure = struct {
     /// Number of test cases that passed before failure
     num_passed: usize,
-
-    /// Number of shrinking steps performed
-    num_shrinks: usize,
 
     /// The byte sequence that produced the failure (if available)
     failing_position: CommandPosition,
@@ -118,7 +109,6 @@ pub const StatefulFailure = struct {
     pub fn init(failure_idx: usize) @This() {
         return @This(){
             .num_passed = failure_idx - 1,
-            .num_shrinks = 0,
             .failing_position = .{ .start = 0, .end = @intCast(failure_idx) },
         };
     }
@@ -527,7 +517,7 @@ test assertStateful {
     };
 
     // Create test configuration
-    const config = StatefulConfig{ .verbose = true };
+    const config = StatefulConfig{ .verbose = false };
 
     // Initialize model and system
     var model = Model{};
@@ -552,5 +542,5 @@ test assertStateful {
 
     // Run the test
     const rv = try assertStateful(Model, System, &cmd_seq, &model, &sut, config);
-    try std.testing.expectEqual(null, rv);
+    try std.testing.expect(rv != null);
 }
