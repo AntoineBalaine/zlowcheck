@@ -114,26 +114,16 @@ fn runStatefulTest(_: void, input: []const u8) !void {
     defer cmd_seq.deinit(std.testing.allocator);
 
     // Run the stateful test
-    const config = state.StatefulConfig{ .verbose = false };
-    _ = state.assertStateful(Model, System, &cmd_seq, &model, &sut, config) catch |err| {
+    const config = state.StatefulConfig{ .verbose = true };
+    const rv = state.assertStateful(Model, System, &cmd_seq, &model, &sut, config) catch |err| {
         // We expect some errors due to OutOfEntropy, which is fine
         if (err == FinitePrng.FinitePrngErr.OutOfEntropy) return;
         return err;
     };
+    try std.testing.expect(rv == null);
 }
 
 // Add a fuzz test that will be picked up by the build system
 test "fuzz stateful testing" {
     try std.testing.fuzz({}, runStatefulTest, .{});
-}
-
-test "fuzz example" {
-    const Context = struct {
-        fn testOne(context: @This(), input: []const u8) anyerror!void {
-            _ = context;
-            // Try passing `--fuzz` to `zig build test` and see if it manages to fail this test case!
-            try std.testing.expect(!std.mem.eql(u8, "canyoufindme", input));
-        }
-    };
-    try std.testing.fuzz(Context{}, Context.testOne, .{});
 }
