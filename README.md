@@ -104,18 +104,18 @@ Full disclaimer: I haven’t tried that - yet…
 ## TODO
 
 Some things I’d like to add:
-**Documentation… 🧐**
+- [x] **Documentation… 🧐**
 
-**Model-Based Testing**
+- [x] **Model-Based Testing**
   - Similar to fast-check's ModelRunner
   - Allow testing against a simplified model of a system
 
-**Stateful Testing**
+- [ ] **Stateful Testing**
   - Commands that modify state
   - Ability to generate and shrink sequences of commands
   - State machine testing
 
-**Fuzzing Integration**
+- [x] **Fuzzing Integration**
   - Integration with fuzzers for more thorough testing
   - Ability to use generated test cases as fuzzing inputs
 
