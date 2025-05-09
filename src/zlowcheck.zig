@@ -28,10 +28,10 @@ const assert_mod = @import("assert.zig");
 pub const assert = assert_mod.assert;
 pub const AssertConfig = assert_mod.AssertConfig;
 
-// const state_mod = @import("state.zig");
-// pub const assertStatefulUnmanaged = state_mod.assertStatefulUnmanaged;
-// pub const CommandSequence = state_mod.CommandSequence;
-// pub const Command = state_mod.Command;
+const state_mod = @import("state.zig");
+pub const assertStateful = state_mod.assertStateful;
+pub const CommandSequence = state_mod.CommandSequence;
+pub const Command = state_mod.Command;
 
 pub const FinitePrng = @import("finite_prng");
 
@@ -42,4 +42,5 @@ test {
     _ = @import("property_test.zig");
     _ = @import("assert.zig");
     _ = @import("state.zig");
+    _ = @import("fuzz_stateful.zig");
 }
