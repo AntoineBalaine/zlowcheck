@@ -30,7 +30,7 @@ pub const AssertConfig = assert_mod.AssertConfig;
 
 const state_mod = @import("state.zig");
 pub const assertStateful = state_mod.assertStateful;
-pub const CommandSequence = state_mod.CommandSequence;
+pub const CommandList = state_mod.CommandList;
 pub const Command = state_mod.Command;
 
 pub const FinitePrng = @import("finite_prng");

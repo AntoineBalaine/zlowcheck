@@ -168,7 +168,7 @@ pub fn assertStateful(
 pub fn shrinkCommandSequence(
     comptime ModelType: type,
     comptime SystemType: type,
-    command_sequence: *CommandSequence(ModelType, SystemType),
+    command_sequence: *CommandList(ModelType, SystemType),
     model: *ModelType,
     sut: *SystemType,
     config: StatefulConfig,
@@ -228,7 +228,7 @@ pub fn shrinkCommandSequence(
 fn testChunk(
     comptime ModelType: type,
     comptime SystemType: type,
-    command_sequence: *CommandSequence(ModelType, SystemType),
+    command_sequence: *CommandList(ModelType, SystemType),
     chunk: CommandPosition,
     model: *ModelType,
     sut: *SystemType,
@@ -260,7 +260,7 @@ fn testChunk(
     return false;
 }
 
-pub fn CommandSequence(comptime M: type, comptime S: type) type {
+pub fn CommandList(comptime M: type, comptime S: type) type {
     return struct {
         const Self = @This();
 
@@ -369,7 +369,7 @@ pub fn CommandSequence(comptime M: type, comptime S: type) type {
 pub fn formatStatefulFailure(
     comptime ModelType: type,
     comptime SystemType: type,
-    command_sequence: *CommandSequence(ModelType, SystemType),
+    command_sequence: *CommandList(ModelType, SystemType),
     model: *ModelType,
     failure: StatefulFailure,
 ) !void {
@@ -537,7 +537,7 @@ test assertStateful {
     var random = prng.random();
 
     // Create command sequence
-    var cmd_seq = try CommandSequence(Model, System).init(&commands, &random, 50, std.testing.allocator);
+    var cmd_seq = try CommandList(Model, System).init(&commands, &random, 50, std.testing.allocator);
     defer cmd_seq.deinit(std.testing.allocator);
 
     // Run the test

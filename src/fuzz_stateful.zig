@@ -110,7 +110,7 @@ fn runStatefulTest(_: void, input: []const u8) !void {
     var sut = System{};
 
     // Create command sequence
-    var cmd_seq = state.CommandSequence(Model, System).init(&commands, &random, 50, std.testing.allocator) catch return error.SkipZigTest;
+    var cmd_seq = state.CommandList(Model, System).init(&commands, &random, 50, std.testing.allocator) catch return error.SkipZigTest;
     defer cmd_seq.deinit(std.testing.allocator);
 
     // Run the stateful test
