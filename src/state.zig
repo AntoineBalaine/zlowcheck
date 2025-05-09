@@ -13,16 +13,6 @@ pub const CommandPosition = struct {
 
 /// Configuration for stateful testing
 pub const StatefulConfig = struct {
-    /// Number of bytes to use for testing (more bytes = more test cases)
-    /// If null, random bytes will be generated
-    bytes: ?[]const u8 = null,
-
-    /// Number of runs to attempt (only used if bytes is null)
-    runs: u32 = 100,
-
-    /// Maximum number of commands per test sequence
-    max_commands_per_run: u32 = 100,
-
     /// Whether to print verbose output
     verbose: bool = false,
 };
@@ -54,7 +44,7 @@ pub fn Command(comptime ModelType: type, comptime SystemType: type) type {
             self.onModelOnlyFn(self.ctx, model);
         }
 
-        /// Run this command on the actual system under test and verify the results
+        /// Run this command on the SUT/model pair and check the result.
         /// Returns false if the command fails or if the system state doesn't match expectations
         pub fn onPair(self: *const Self, model: *ModelType, sut: *SystemType) !bool {
             return self.onPairFn(self.ctx, model, sut);
@@ -132,9 +122,9 @@ pub const StatefulFailure = struct {
     }
 };
 
-/// Assert that a stateful system behaves according to its model (unmanaged version)
+/// Assert that a stateful system behaves according to its model
 /// Caller is responsible for initializing and cleaning up model and sut
-pub fn assertStatefulUnmanaged(
+pub fn assertStateful(
     comptime ModelType: type,
     comptime SystemType: type,
     command_sequence: anytype, // we could convert this to an anytype for more flexibility
@@ -142,7 +132,7 @@ pub fn assertStatefulUnmanaged(
     sut: *SystemType,
     config: StatefulConfig,
 ) !?StatefulFailure {
-    std.debug.assert(config.max_commands_per_run <= std.math.maxInt(u32));
+    std.debug.assert(command_sequence.max_runs <= std.math.maxInt(u32));
     // Get an iterator for the command sequence
     var iterator = command_sequence.iterator(null);
 
@@ -326,22 +316,22 @@ pub fn CommandSequence(comptime M: type, comptime S: type) type {
         pub fn iterator(self: *Self, position: ?CommandPosition) Iterator {
             if (position) |pos| {
                 self.random.prng.fixed_buffer.pos = self.sequence.items[pos.start].byte_pos;
+                return Iterator{ .parent = self, .index = pos.start, .max_runs = pos.end };
             }
-            return Iterator{
-                .parent = self,
-                .index = if (position) |pos| pos.start else 0,
-            };
+
+            return Iterator{ .parent = self, .index = if (position) |pos| pos.start else 0, .max_runs = self.max_runs };
         }
 
         pub const Iterator = struct {
             parent: *Self,
             index: usize,
+            max_runs: usize,
 
             pub fn next(self: *Iterator) !?Command(M, S) {
-                if (self.index >= self.parent.max_runs) return null;
+                if (self.index >= self.max_runs) return null;
 
-                const cmd_idx = try self.parent.random.intRangeLessThan(u32, 0, @intCast(self.parent.commands.len));
                 const byte_pos = self.parent.random.prng.fixed_buffer.pos;
+                const cmd_idx = try self.parent.random.intRangeLessThan(u32, 0, @intCast(self.parent.commands.len));
 
                 // Store it in our history
                 self.parent.sequence.appendAssumeCapacity(.{ .byte_pos = @intCast(byte_pos), .cmd_idx = Idx.fromIndex(cmd_idx) });
@@ -353,7 +343,7 @@ pub fn CommandSequence(comptime M: type, comptime S: type) type {
             /// doesn’t record the commands into the sequence list,
             /// doesn’t generate new command selection - only replays through the list of decisions
             pub fn nextReplay(self: *Iterator) !?Command(M, S) {
-                if (self.index >= self.parent.max_runs) return null;
+                if (self.index >= self.max_runs) return null;
 
                 const cmd_idx = try self.parent.random.intRangeLessThan(u32, 0, @intCast(self.parent.commands.len));
 
@@ -452,7 +442,7 @@ pub fn formatStatefulFailure(
     }
 }
 
-test assertStatefulUnmanaged {
+test assertStateful {
     // Define a simple model
     const Model = struct {
         value: u32 = 0,
@@ -498,14 +488,9 @@ test assertStatefulUnmanaged {
         pub fn onPair(self: *@This(), model: *Model, sut: *System) !bool {
             _ = self;
             sut.increment();
-            return model.value == sut.value;
-        }
 
-        pub fn format(self: *@This(), comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-            _ = self;
-            _ = fmt;
-            _ = options;
-            try writer.writeAll("Increment");
+            model.value += 1;
+            return model.value == sut.value;
         }
     };
 
@@ -524,14 +509,9 @@ test assertStatefulUnmanaged {
         pub fn onPair(self: *@This(), model: *Model, sut: *System) !bool {
             _ = self;
             sut.decrement();
-            return model.value == sut.value;
-        }
 
-        pub fn format(self: *@This(), comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-            _ = self;
-            _ = fmt;
-            _ = options;
-            try writer.writeAll("Decrement");
+            model.value -= 1;
+            return model.value == sut.value;
         }
     };
 
@@ -544,11 +524,7 @@ test assertStatefulUnmanaged {
     };
 
     // Create test configuration
-    const config = StatefulConfig{
-        .runs = 100,
-        .max_commands_per_run = 50,
-        .verbose = true,
-    };
+    const config = StatefulConfig{ .verbose = true };
 
     // Initialize model and system
     var model = Model{};
@@ -561,9 +537,9 @@ test assertStatefulUnmanaged {
     var random = prng.random();
 
     // Create command sequence
-    var cmd_seq = try CommandSequence(Model, System).init(&commands, &random, config.max_commands_per_run, std.testing.allocator);
+    var cmd_seq = try CommandSequence(Model, System).init(&commands, &random, 50, std.testing.allocator);
     defer cmd_seq.deinit(std.testing.allocator);
 
     // Run the test
-    _ = try assertStatefulUnmanaged(Model, System, &cmd_seq, &model, &sut, config);
+    _ = try assertStateful(Model, System, &cmd_seq, &model, &sut, config);
 }
