@@ -8,6 +8,7 @@ shrinking of sequences to their smallest failing version,
 and replayable paths for model tests.
 
 - [Disclaimer](#disclaimer)
+- [Devlog entries](#devlog-entries)
 - [Finite PRNG](#finite-prng)
 - [Property-based tests](#property-based-tests)
 - [Why is it valuable?](#why-is-it-valuable)
@@ -17,6 +18,10 @@ and replayable paths for model tests.
 
 ### Disclaimer
 Pre-alpha software. There will be dragons. Consider this a proof of concept.
+
+## Devlog entries
+- **Devlog 1**: [How the PRNG works](https://antoinebalaine.github.io/devlog/code/2025/05/09/Prng_hack.html)
+- **Devlog 2**: [How the model tester works](https://antoinebalaine.github.io/devlog/code/2025/05/09/model-testing.html)
 ## Finite PRNG:
 A finite-entropy number generator: you input some bytes into it, you pass it to the property-based tests, and it churns out data until it runs out of bytes to consume. The length of the byte sequence determines for how long it can go - and incidentally describes how complex your program is. It will error upon running out with `OutOfEntropy`.
 ```zig
