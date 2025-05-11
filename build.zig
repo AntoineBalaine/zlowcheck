@@ -1,5 +1,7 @@
 const std = @import("std");
 
+// Export the main module for use with zig fetch
+
 // Although this function looks imperative, note that its job is to
 // declaratively construct a build graph that will be executed by an external
 // runner.
@@ -8,12 +10,13 @@ pub fn build(b: *std.Build) void {
 
     const optimize = b.standardOptimizeOption(.{});
 
-    const pbt_mod = b.createModule(.{
+    const pbt_mod = b.addModule("zlowcheck", .{
         .root_source_file = b.path("src/zlowcheck.zig"),
         .target = target,
         .optimize = optimize,
     });
 
+    // Create the PRNG module separately for internal use
     const prng_mod = b.createModule(.{
         .root_source_file = b.path("src/finite_prng.zig"),
         .target = target,
@@ -47,25 +50,6 @@ pub fn build(b: *std.Build) void {
 
     b.installArtifact(pbt_lib);
     b.installArtifact(prng_lib);
-
-    const exe_mod = b.createModule(.{
-        .root_source_file = b.path("src/main.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    exe_mod.addImport("zlowcheck", pbt_mod);
-    exe_mod.addImport("finite_prng", prng_mod);
-
-    const exe = b.addExecutable(.{
-        .name = "zlowcheck",
-        .root_module = exe_mod,
-    });
-    b.installArtifact(exe);
-    const run_cmd = b.addRunArtifact(exe);
-    run_cmd.step.dependOn(b.getInstallStep());
-    if (b.args) |args| {
-        run_cmd.addArgs(args);
-    }
 
     // Set up tests with the test_helpers module
     const pbt_unit_tests = b.addTest(.{

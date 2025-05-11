@@ -32,6 +32,8 @@ const state_mod = @import("state.zig");
 pub const assertStateful = state_mod.assertStateful;
 pub const CommandList = state_mod.CommandList;
 pub const Command = state_mod.Command;
+pub const StatefulConfig = state_mod.StatefulConfig;
+pub const CommandPosition = state_mod.CommandPosition;
 
 pub const FinitePrng = @import("finite_prng");
 
