@@ -137,7 +137,10 @@ pub fn assertStateful(
         }
 
         // Run on the system under test
-        if (try cmd.onPair(model, sut)) continue;
+        if (try cmd.onPair(model, sut)) {
+            iterator.executed_count += 1;
+            continue;
+        }
 
         // Create a failure result
         var result: StatefulFailure = .init(iterator.index);
@@ -268,6 +271,7 @@ pub fn CommandList(comptime M: type, comptime S: type) type {
         max_runs: u32,
         commands: []const Command(M, S),
         sequence: std.ArrayListUnmanaged(Entry),
+        allocator: std.mem.Allocator,
 
         const Idx = enum(u32) {
             _,
@@ -298,6 +302,7 @@ pub fn CommandList(comptime M: type, comptime S: type) type {
                 .max_runs = @intCast(max_runs),
                 .commands = commands,
                 .sequence = try std.ArrayListUnmanaged(Entry).initCapacity(allocator, max_runs),
+                .allocator = allocator,
             };
         }
 
@@ -308,25 +313,27 @@ pub fn CommandList(comptime M: type, comptime S: type) type {
         pub fn iterator(self: *Self, position: ?CommandPosition) Iterator {
             if (position) |pos| {
                 self.random.prng.fixed_buffer.pos = self.sequence.items[pos.start].byte_pos;
-                return Iterator{ .parent = self, .index = pos.start, .max_runs = pos.end };
+                return Iterator{ .parent = self, .index = pos.start, .executed_count = 0, .max_runs = pos.end };
             }
 
-            return Iterator{ .parent = self, .index = if (position) |pos| pos.start else 0, .max_runs = self.max_runs };
+            return Iterator{ .parent = self, .index = if (position) |pos| pos.start else 0, .executed_count = 0, .max_runs = self.max_runs };
         }
 
         pub const Iterator = struct {
             parent: *Self,
             index: usize,
+            executed_count: usize = 0,
             max_runs: usize,
 
             pub fn next(self: *Iterator) !?Command(M, S) {
-                if (self.index >= self.max_runs) return null;
+                if (self.executed_count >= self.max_runs) return null;
 
                 const byte_pos = self.parent.random.prng.fixed_buffer.pos;
                 const cmd_idx = try self.parent.random.intRangeLessThan(u32, 0, @intCast(self.parent.commands.len));
 
-                // Store it in our history
-                self.parent.sequence.appendAssumeCapacity(.{ .byte_pos = @intCast(byte_pos), .cmd_idx = Idx.fromIndex(cmd_idx) });
+                // Store it in our history - use append instead of appendAssumeCapacity
+                // because we may exceed initial capacity when many commands fail preconditions
+                try self.parent.sequence.append(self.parent.allocator, .{ .byte_pos = @intCast(byte_pos), .cmd_idx = Idx.fromIndex(cmd_idx) });
 
                 self.index += 1;
                 return self.parent.commands[@intCast(cmd_idx)];
@@ -345,7 +352,8 @@ pub fn CommandList(comptime M: type, comptime S: type) type {
 
             pub fn reset(self: *Iterator) void {
                 // Reset to the start position
-                self.index = self.start;
+                self.index = 0;
+                self.executed_count = 0;
             }
         };
 
