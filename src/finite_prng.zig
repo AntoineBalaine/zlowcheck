@@ -248,19 +248,24 @@ pub const FiniteRandom = struct {
         // Calculate threshold using wrapping negation
         const t = (0 -% less_than) % less_than;
 
-        // Generate random values until we find one that passes the threshold test
+        // Because the FixedBufferStream wraps around when exhausted, rejection
+        // sampling can loop indefinitely if the byte pattern never produces a
+        // value that passes the threshold. We bound the attempts and fall back
+        // to biased sampling if unbiased rejection fails.
+        const max_attempts = 16;
         var x: T = undefined;
         var m: @TypeOf(math.mulWide(T, 0, 0)) = undefined;
         var l: T = undefined;
 
-        while (true) {
+        for (0..max_attempts) |_| {
             x = try self.int(T);
             m = math.mulWide(T, x, less_than);
             l = @truncate(m);
-            if (l >= t) break;
+            if (l >= t) return @intCast(m >> bits);
         }
 
-        return @intCast(m >> bits);
+        // Fall back to biased sampling to avoid infinite loops.
+        return self.uintLessThanBiased(T, less_than);
     }
 
     pub fn uintAtMostBiased(self: *@This(), comptime T: type, at_most: T) !T {
